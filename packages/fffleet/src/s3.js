@@ -244,6 +244,12 @@ export function createS3Client(config) {
       await download(bucket, key, path, signal);
     },
 
+    /** Size and ETag of an object, without downloading it. */
+    async head(bucket, key, { signal } = {}) {
+      const res = await request('HEAD', bucket, key, { signal });
+      return { size: Number(res.headers.get('content-length')), etag: res.headers.get('etag') };
+    },
+
     /** Uploads a local file; large files go up in parts. Returns the size. */
     putFile,
 

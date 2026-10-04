@@ -130,7 +130,7 @@ One resource, `/v1/jobs`, served the same way by a worker and by the orchestrato
 
 - **Kinds.** A `batch` job ends by itself and has outputs; a `stream` job (a live relay, an HLS encoder) runs until it is cancelled or its input ends.
 - **States.** `queued → assigned → staging → running → uploading → succeeded | failed | cancelled`. `assigned` happens only in the orchestrator; `staging` and `uploading` only when there are http(s) inputs or outputs to move.
-- **Endpoints.** Inputs and outputs are named URIs used as `{{input:name}}` / `{{output:name}}` in the ffmpeg arguments.
+- **Endpoints.** Inputs and outputs are named URIs used as `{{input:name}}` / `{{output:name}}` in the ffmpeg arguments. `{{inputdir:name}}` is the directory a staged input sits in (each input has its own), for options that take a directory such as `ass=...:fontsdir=`. Workers started with `FFFLEET_CACHE_DIR` keep staged `s3://` and `http(s)://` inputs between jobs, so a large source is downloaded once and checked against its ETag on later jobs.
   - `file:` is used in place, so the path has to exist on the worker (a shared mount).
   - `http(s):` inputs of a batch job are downloaded before ffmpeg starts, and outputs are uploaded with `PUT` after it ends. A stream job hands them to ffmpeg as they are.
   - `s3://bucket/key` (batch jobs) is downloaded before ffmpeg starts or uploaded after it ends (multipart for large files) by a worker that holds S3 credentials. An output ending in `/` is a folder: `{{output:name}}` is a directory and every file ffmpeg writes there is uploaded under that prefix, e.g. `'-hls_segment_filename', '{{output:hls}}/seg%03d.ts', '{{output:hls}}/index.m3u8'`. Such jobs go only to workers that report `scheme:s3`.

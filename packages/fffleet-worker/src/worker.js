@@ -19,6 +19,7 @@ const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.u
  * @param {string | null} [opts.token]              Static token that is granted full access (the orchestrator sends it).
  * @param {string | null} [opts.keysUrl]            An orchestrator's /v1/auth/keys: tokens it issued are accepted too, with their scopes.
  * @param {Record<string, number> | string} [opts.slots]   Pools, or 'auto' / 'auto:<cores per job>' to size them from the CPU count.
+ * @param {{ dir: string, maxBytes?: number | string } | null} [opts.cache]   Keeps staged s3:/http inputs between jobs.
  * @param {('batch' | 'stream')[] | string} [opts.kinds]   Job kinds this worker takes; both by default. A batch-only and a stream-only worker keep long streams from starving encodes.
  * @param {string} [opts.ffmpegPath]
  * @param {string} [opts.workRoot]
@@ -50,9 +51,10 @@ export function createWorker({
   progressIntervalMs = 1000,
   executors = {},
   s3 = null,
+  cache = null,
   log = () => {},
 } = {}) {
-  const manager = new JobManager({ slots, kinds, ffmpegPath, workRoot, workerId: id, progressIntervalMs, executors, s3 });
+  const manager = new JobManager({ slots, kinds, ffmpegPath, workRoot, workerId: id, progressIntervalMs, executors, s3, cache });
   let capabilities = [];
   let server = null;
   let url = null;

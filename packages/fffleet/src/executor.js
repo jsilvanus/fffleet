@@ -24,6 +24,7 @@ const KILL_GRACE_MS = 5000;
  * @property {string} [ffmpegPath]
  * @property {typeof fetch} [fetch]
  * @property {ReturnType<typeof import('./s3.js').createS3Client> | null} [s3]   Needed for s3: URIs.
+ * @property {ReturnType<typeof import('./input-cache.js').createInputCache> | null} [cache]   Reuses staged s3: and http(s): inputs between jobs.
  */
 
 /**
@@ -37,7 +38,7 @@ const KILL_GRACE_MS = 5000;
 export async function runFfmpegJob(spec, rt) {
   const doFetch = rt.fetch ?? globalThis.fetch;
   const batch = spec.kind === 'batch';
-  const values = { input: {}, output: {} };
+  const values = { input: {}, inputdir: {}, output: {} };
   const scheme = e => new URL(e.uri).protocol;
 
   if (!rt.s3 && [...spec.inputs, ...spec.outputs].some(e => scheme(e) === 's3:')) {
@@ -49,6 +50,7 @@ export async function runFfmpegJob(spec, rt) {
   for (const input of spec.inputs) {
     const local = await stageInput(input, { batch, rt, doFetch });
     values.input[input.name] = local;
+    if (local !== input.uri) values.inputdir[input.name] = dirname(local);
     if (local !== input.uri && scheme(input) !== 'file:') rt.transfer?.('in', scheme(input).slice(0, -1), (await stat(local)).size);
   }
 
@@ -130,10 +132,16 @@ async function stageInput(input, { batch, rt, doFetch }) {
   }
   if (batch && url.protocol === 's3:') {
     const { bucket, key } = parseS3Uri(input.uri);
-    const path = join(rt.workDir, 'in', `${input.name}${extname(key)}`);
+    // Each input gets its own directory, so {{inputdir:name}} holds only that file (for example a font for ass fontsdir).
+    const path = join(rt.workDir, 'in', input.name, `file${extname(key)}`);
     await mkdir(dirname(path), { recursive: true });
     try {
-      await rt.s3.getFile(bucket, key, path, { signal: rt.signal });
+      const head = rt.cache ? await rt.s3.head(bucket, key, { signal: rt.signal }).catch(() => null) : null;
+      if (head?.etag) {
+        await rt.cache.stage({ key: input.uri, validator: head.etag, target: path, download: p => rt.s3.getFile(bucket, key, p, { signal: rt.signal }) });
+      } else {
+        await rt.s3.getFile(bucket, key, path, { signal: rt.signal });
+      }
     } catch (err) {
       if (rt.signal.aborted) throw rt.signal.reason;
       throw new FleetError('INPUT_FAILED', `could not fetch input "${input.name}": ${err.message}`);
@@ -142,8 +150,27 @@ async function stageInput(input, { batch, rt, doFetch }) {
   }
   if (!batch || !HTTP_SCHEMES.includes(url.protocol)) return input.uri;
 
-  const path = join(rt.workDir, 'in', `${input.name}${extname(url.pathname)}`);
+  const path = join(rt.workDir, 'in', input.name, `file${extname(url.pathname)}`);
   await mkdir(dirname(path), { recursive: true });
+  if (rt.cache) {
+    const head = await doFetch(input.uri, { method: 'HEAD', signal: rt.signal }).catch(() => null);
+    const validator = head?.ok ? head.headers.get('etag') ?? (head.headers.get('last-modified') && head.headers.get('content-length') ? `${head.headers.get('last-modified')}|${head.headers.get('content-length')}` : null) : null;
+    if (validator) {
+      try {
+        await rt.cache.stage({ key: input.uri, validator, target: path, download: p => downloadHttp(input, p, { rt, doFetch }) });
+      } catch (err) {
+        if (err instanceof FleetError) throw err;
+        if (rt.signal.aborted) throw rt.signal.reason;
+        throw new FleetError('INPUT_FAILED', `could not fetch input "${input.name}": ${err.message}`);
+      }
+      return path;
+    }
+  }
+  await downloadHttp(input, path, { rt, doFetch });
+  return path;
+}
+
+async function downloadHttp(input, path, { rt, doFetch }) {
   let res;
   try {
     res = await doFetch(input.uri, { signal: rt.signal });
@@ -153,7 +180,6 @@ async function stageInput(input, { batch, rt, doFetch }) {
   }
   if (!res.ok || !res.body) throw new FleetError('INPUT_FAILED', `could not fetch input "${input.name}": HTTP ${res.status}`);
   await pipeline(Readable.fromWeb(res.body), createWriteStream(path));
-  return path;
 }
 
 async function uploadS3Output(o, rt) {

@@ -33,7 +33,7 @@ const ALL_SCHEMES = new Set([...FILE_SCHEMES, ...HTTP_SCHEMES, ...PASSTHROUGH_SC
 const ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
 const NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const CLASS_RE = /^[a-z0-9_-]{1,32}$/;
-const PLACEHOLDER_RE = /\{\{(input|output):([^}]*)\}\}/g;
+const PLACEHOLDER_RE = /\{\{(input|inputdir|output):([^}]*)\}\}/g;
 
 export class ContractError extends Error {
   /** @param {{ path: string, message: string }[]} errors */
@@ -214,7 +214,7 @@ export function implicitRequirements(spec) {
 }
 
 function checkPlaceholders(args, inputs, outputs, err) {
-  const names = { input: new Set(inputs.map(i => i.name)), output: new Set(outputs.map(o => o.name)) };
+  const names = { input: new Set(inputs.map(i => i.name)), inputdir: new Set(inputs.map(i => i.name)), output: new Set(outputs.map(o => o.name)) };
   args.forEach((arg, i) => {
     for (const m of arg.matchAll(PLACEHOLDER_RE)) {
       if (!names[m[1]].has(m[2])) err(`ffmpeg.args[${i}]`, `${m[0]} names no ${m[1]}`);
@@ -223,13 +223,13 @@ function checkPlaceholders(args, inputs, outputs, err) {
 }
 
 /**
- * Replaces {{input:name}} and {{output:name}} in every argument.
+ * Replaces {{input:name}}, {{inputdir:name}} (the directory holding that input) and {{output:name}} in every argument.
  * @param {string[]} args
- * @param {{ input: Record<string, string>, output: Record<string, string> }} values
+ * @param {{ input: Record<string, string>, output: Record<string, string>, inputdir?: Record<string, string> }} values
  */
 export function resolvePlaceholders(args, values) {
   return args.map(arg => arg.replace(PLACEHOLDER_RE, (whole, kind, name) => {
-    const v = values[kind][name];
+    const v = values[kind]?.[name];
     if (v === undefined) throw new Error(`unresolved placeholder ${whole}`);
     return v;
   }));

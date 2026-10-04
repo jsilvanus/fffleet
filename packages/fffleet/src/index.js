@@ -11,3 +11,4 @@ export { detectCapabilities, satisfies } from './capabilities.js';
 export { readSse, followJobEvents } from './sse.js';
 export { createS3Client, s3ConfigFromEnv, parseS3Uri, contentTypeFor, signV4 } from './s3.js';
 export { SCOPES, hashSecret, verifySecret, generateSecret, createTokenProvider } from './auth.js';
+export { createInputCache, parseSize } from './input-cache.js';

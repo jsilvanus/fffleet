@@ -21,6 +21,8 @@ docker run -p 5100:5100 -e FFFLEET_TOKEN=secret ghcr.io/jsilvanus/fffleet-worker
 | `FFFLEET_WORKER_ID` | `worker-<hostname>` | |
 | `FFFLEET_HEARTBEAT_MS` | `5000` | |
 | `FFFLEET_WORK_DIR` | `$TMPDIR/fffleet` | Scratch space for staged inputs and outputs. |
+| `FFFLEET_CACHE_DIR` | | Keep staged `s3://` and `http(s)://` inputs here between jobs (hard-linked, checked against the object's ETag). Off when unset. |
+| `FFFLEET_CACHE_MAX_SIZE` | `20GB` | Least recently used inputs are removed above this. |
 | `FFMPEG_PATH` | `ffmpeg` | |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | | Enable `s3://` inputs and outputs and the `scheme:s3` capability. Also `AWS_SESSION_TOKEN`, `AWS_REGION`. |
 | `FFFLEET_S3_ENDPOINT`, `FFFLEET_S3_PATH_STYLE` | AWS, off | For S3-compatible stores, e.g. `http://minio:9000` and `1`. |

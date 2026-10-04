@@ -15,7 +15,7 @@ export type JobKind = 'stream' | 'batch';
 export type JobState = 'queued' | 'assigned' | 'staging' | 'running' | 'uploading' | 'succeeded' | 'failed' | 'cancelled';
 
 export interface Endpoint {
-  /** Name used in placeholders: {{input:name}} / {{output:name}}. */
+  /** Name used in placeholders: {{input:name}}, {{inputdir:name}} (the directory holding that staged input) and {{output:name}}. */
   name: string;
   /**
    * file:, http(s): (staged for batch jobs), s3://bucket/key (batch jobs; a key ending in "/" is an
@@ -169,6 +169,8 @@ export interface JobManagerOptions {
   fetch?: typeof fetch;
   /** S3 settings or a client; enables s3: URIs. */
   s3?: S3Config | S3Client | null;
+  /** Keeps staged s3: and http(s): inputs between jobs, hard-linked and checked against the ETag. Least recently used are removed above maxBytes (default 20 GB). */
+  cache?: { dir: string; maxBytes?: number | string } | null;
 }
 
 export interface PoolStats {
@@ -180,6 +182,7 @@ export class JobManager {
   constructor(opts?: JobManagerOptions);
   readonly slots: Record<string, number>;
   readonly kinds: JobKind[];
+  readonly cache: InputCache | null;
   submit(spec: JobSpecInput): { created: boolean; queued?: boolean; job: JobSnapshot };
   get(id: string): JobSnapshot | null;
   list(): JobSnapshot[];
@@ -193,6 +196,13 @@ export class JobManager {
 
 export function normalizeSlots(slots: Record<string, number | string> | string, opts?: { kinds?: JobKind[]; cpus?: number }): Record<string, number>;
 /** Parses 'batch,stream' or an array; no value means both kinds. */
+export interface InputCache {
+  readonly stats: { hits: number; misses: number };
+  stage(opts: { key: string; validator: string; target: string; download: (path: string) => Promise<void> }): Promise<'hit' | 'miss'>;
+}
+export function createInputCache(opts: { dir: string; maxBytes?: number }): InputCache;
+/** "500", "20MB", "50GB" (decimal units) as bytes. */
+export function parseSize(value: number | string): number;
 export function normalizeKinds(kinds?: JobKind[] | string): JobKind[];
 /** Slot pools sized from the CPU count: batch only cores/2, stream only cores, both: default cores/2 plus stream cores/4. */
 export function autoSlots(opts?: { cpus?: number; kinds?: JobKind[]; coresPerSlot?: number }): Record<string, number>;
@@ -310,6 +320,7 @@ export interface S3Config {
 
 export interface S3Client {
   getFile(bucket: string, key: string, path: string, opts?: { signal?: AbortSignal }): Promise<void>;
+  head(bucket: string, key: string, opts?: { signal?: AbortSignal }): Promise<{ size: number; etag: string | null }>;
   putFile(bucket: string, key: string, path: string, opts?: { contentType?: string; signal?: AbortSignal; forceMultipart?: boolean }): Promise<number>;
   putDirectory(bucket: string, prefix: string, dir: string, opts?: { signal?: AbortSignal }): Promise<number>;
   deleteObject(bucket: string, key: string, opts?: { signal?: AbortSignal }): Promise<void>;
