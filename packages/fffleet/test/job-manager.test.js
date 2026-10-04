@@ -28,12 +28,13 @@ test('runs up to the slot count and queues the rest', async () => {
   for (const id of ['a', 'b', 'c']) m.submit(fakeSpec(id));
   await until(() => started.length === 2);
   await tick();
-  assert.deepEqual(started, ['a', 'b']);
+  // Both start at once; which executor call lands first is not defined.
+  assert.deepEqual([...started].sort(), ['a', 'b']);
   assert.equal(m.get('c').state, 'queued');
   assert.deepEqual(m.stats(), { pools: { default: { total: 2, used: 2 } }, queued: 1, running: 2 });
   controls.get('a').release();
   await until(() => started.length === 3);
-  assert.deepEqual(started, ['a', 'b', 'c']);
+  assert.equal(started[2], 'c');
   assert.equal(m.get('a').state, 'succeeded');
   await m.close();
 });
