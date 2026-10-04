@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { canonicalJson, parseSpec } from './contract.js';
+import { canonicalJson, implicitRequirements, parseSpec } from './contract.js';
+import { createS3Client } from './s3.js';
 import { runFfmpegJob } from './executor.js';
 import { FleetError, JobRecord, byPriority, pruneFinished } from './job-record.js';
 
@@ -26,6 +27,7 @@ export class JobManager {
    * @param {Record<string, Function>} [opts.executors]   type -> (spec, runtime) => Promise<result>
    * @param {string} [opts.workerId]
    * @param {typeof fetch} [opts.fetch]
+   * @param {object | null} [opts.s3]   S3 settings (see s3ConfigFromEnv) or a client; enables s3: URIs.
    */
   constructor({
     slots = { default: 2 },
@@ -37,6 +39,7 @@ export class JobManager {
     executors = {},
     workerId = null,
     fetch: fetchImpl,
+    s3 = null,
   } = {}) {
     this.slots = normalizeSlots(slots);
     this.used = Object.fromEntries(Object.keys(this.slots).map(k => [k, 0]));
@@ -48,6 +51,7 @@ export class JobManager {
     this.executors = { ffmpeg: runFfmpegJob, ...executors };
     this.workerId = workerId;
     this.fetch = fetchImpl;
+    this.s3 = !s3 ? null : typeof s3.getFile === 'function' ? s3 : createS3Client({ fetch: fetchImpl, ...s3 });
     /** @type {Map<string, JobRecord & { run?: any }>} */
     this.jobs = new Map();
     /** @type {JobRecord[]} */
@@ -78,6 +82,9 @@ export class JobManager {
     }
     if (!this.executors[spec.type]) {
       throw new FleetError('UNSUPPORTED_TYPE', `no executor for job type "${spec.type}"`, { status: 422 });
+    }
+    if (!this.s3 && implicitRequirements(spec).includes('scheme:s3')) {
+      throw new FleetError('UNSUPPORTED_SCHEME', 's3: URIs need S3 credentials on this runner', { status: 422 });
     }
     const pool = this.poolFor(spec.class);
     if (this.slots[pool] === undefined || this.slots[pool] === 0) {
@@ -180,6 +187,7 @@ export class JobManager {
       signal: abort.signal,
       ffmpegPath: this.ffmpegPath,
       fetch: this.fetch,
+      s3: this.s3,
       setState: state => {
         if (!abort.signal.aborted) record.push({ state, ...(this.workerId ? { workerId: this.workerId } : {}) });
       },

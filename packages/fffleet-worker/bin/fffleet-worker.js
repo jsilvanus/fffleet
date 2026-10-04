@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { s3ConfigFromEnv } from 'fffleet';
 import { createWorker } from '../src/worker.js';
 
 const env = process.env;
@@ -18,6 +19,7 @@ const worker = createWorker({
   orchestratorToken: env.FFFLEET_WORKER_TOKEN || null,
   advertiseUrl: env.FFFLEET_ADVERTISE_URL || null,
   heartbeatMs: Number(env.FFFLEET_HEARTBEAT_MS ?? 5000),
+  s3: s3ConfigFromEnv(env),
   log: msg => console.log(`[fffleet-worker] ${msg}`),
 });
 

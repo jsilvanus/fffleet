@@ -49,6 +49,7 @@ One resource, `/v1/jobs`, served the same way by a worker and by the orchestrato
 - **Endpoints.** Inputs and outputs are named URIs used as `{{input:name}}` / `{{output:name}}` in the ffmpeg arguments.
   - `file:` is used in place, so the path has to exist on the worker (a shared mount).
   - `http(s):` inputs of a batch job are downloaded before ffmpeg starts, and outputs are uploaded with `PUT` after it ends. A stream job hands them to ffmpeg as they are.
+  - `s3://bucket/key` (batch jobs) is downloaded before ffmpeg starts or uploaded after it ends (multipart for large files) by a worker that holds S3 credentials. An output ending in `/` is a folder: `{{output:name}}` is a directory and every file ffmpeg writes there is uploaded under that prefix, e.g. `'-hls_segment_filename', '{{output:hls}}/seg%03d.ts', '{{output:hls}}/index.m3u8'`. Such jobs go only to workers that report `scheme:s3`.
   - `rtmp(s):`, `srt:`, `udp:`, `tcp:`, `rtsp:` and `rtp:` always go to ffmpeg as they are.
 - **Ids.** The client picks the id. Submitting the same id and spec again returns the existing job (200), and a different spec under the same id is a conflict (409). A retry or a local fallback can therefore never run a job twice.
 - **Classes and slots.** Every job draws a slot from the pool named by its `class` (`default` unless set). A worker with `FFFLEET_SLOTS=default=2,stream=1` keeps one slot for streams that batch work cannot take.
@@ -69,6 +70,14 @@ One resource, `/v1/jobs`, served the same way by a worker and by the orchestrato
 | `GET /v1/workers`, `POST /v1/workers/:id/drain` | Orchestrator only. |
 
 Errors look like `{ "error": { "code": "QUEUE_FULL", "message": "..." } }`.
+
+## Storage
+
+fffleet has no storage of its own: inputs and outputs are wherever their URIs point.
+
+- **Shared volume:** `file:` paths that every worker mounts (the compose example uses `/media`).
+- **S3 or S3-compatible (MinIO, Ceph, Garage, ...):** give workers credentials and use `s3://` URIs. Workers read `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN` and `AWS_REGION`, and for non-AWS stores `FFFLEET_S3_ENDPOINT` (and `FFFLEET_S3_PATH_STYLE=1`, the usual setting for MinIO). For the local runner pass `local: { s3: s3ConfigFromEnv() }` to `createFleet`.
+- **Presigned URLs:** without credentials on the workers, `https://` presigned GET and PUT URLs work for single files (one PUT, so at most 5 GB on S3).
 
 ## Failure handling
 

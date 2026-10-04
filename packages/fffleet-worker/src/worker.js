@@ -24,6 +24,7 @@ const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.u
  * @param {number} [opts.heartbeatMs]
  * @param {number} [opts.progressIntervalMs]
  * @param {Record<string, Function>} [opts.executors]  Extra job types: type -> (spec, runtime) => Promise<result>.
+ * @param {object | null} [opts.s3]                   S3 settings (see s3ConfigFromEnv); adds the scheme:s3 capability.
  * @param {(msg: string) => void} [opts.log]
  */
 export function createWorker({
@@ -41,9 +42,10 @@ export function createWorker({
   heartbeatMs = 5000,
   progressIntervalMs = 1000,
   executors = {},
+  s3 = null,
   log = () => {},
 } = {}) {
-  const manager = new JobManager({ slots, ffmpegPath, workRoot, workerId: id, progressIntervalMs, executors });
+  const manager = new JobManager({ slots, ffmpegPath, workRoot, workerId: id, progressIntervalMs, executors, s3 });
   let capabilities = [];
   let server = null;
   let url = null;
@@ -92,7 +94,8 @@ export function createWorker({
     async start() {
       // type:ffmpeg comes from detection, so a machine without ffmpeg does not claim it.
       const types = Object.keys(manager.executors).filter(t => t !== 'ffmpeg').map(t => `type:${t}`);
-      capabilities = [...new Set([...(await detectCapabilities(ffmpegPath)), ...types, ...extraCapabilities])].sort();
+      const schemes = manager.s3 ? ['scheme:s3'] : [];
+      capabilities = [...new Set([...(await detectCapabilities(ffmpegPath)), ...types, ...schemes, ...extraCapabilities])].sort();
       ({ server, url } = await listen(createApiHandler({ backend, token }), { port, host }));
       log(`fffleet-worker ${id} listening on ${url} with slots ${JSON.stringify(manager.slots)}`);
       if (orchestratorUrl) {
