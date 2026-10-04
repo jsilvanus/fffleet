@@ -109,3 +109,21 @@ test('the contract checks s3: URIs', () => {
   assert.throws(() => parseSpec({ kind: 'batch', inputs: [{ name: 'i', uri: 's3://b' }], ffmpeg: { args: ['x'] } }), /need a key/);
   assert.doesNotThrow(() => parseSpec({ kind: 'batch', outputs: [{ name: 'o', uri: 's3://b/' }], ffmpeg: { args: ['x'] } }));
 });
+
+test('a worker cache keeps an S3 input between jobs', { skip }, async () => {
+  const cached = new JobManager({ workRoot: join(tmp.dir, 'work-cache'), s3: config, cache: { dir: join(tmp.dir, 'cache') } });
+  const submit = id => {
+    cached.submit({
+      id, kind: 'batch',
+      inputs: [{ name: 'src', uri: `s3://${bucket}/in/red.png` }],
+      outputs: [{ name: 'dst', uri: `s3://${bucket}/out/${id}.png` }],
+      ffmpeg: { args: ['-i', '{{input:src}}', '-vf', 'scale=16:16', '{{output:dst}}'] },
+    });
+    return collect(cached, id).done;
+  };
+  assert.equal((await submit('cache-1')).at(-1).state, 'succeeded');
+  assert.equal((await submit('cache-2')).at(-1).state, 'succeeded');
+  assert.equal(cached.cache.stats.misses, 1);
+  assert.equal(cached.cache.stats.hits, 1);
+  await cached.close();
+});

@@ -4,6 +4,7 @@ import { mkdir, rm } from 'node:fs/promises';
 import { availableParallelism, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KINDS, canonicalJson, implicitRequirements, parseSpec } from './contract.js';
+import { createInputCache, parseSize } from './input-cache.js';
 import { createS3Client } from './s3.js';
 import { runFfmpegJob } from './executor.js';
 import { FleetError, JobRecord, byPriority, pruneFinished } from './job-record.js';
@@ -33,6 +34,7 @@ export class JobManager extends EventEmitter {
    * @param {string} [opts.workerId]
    * @param {typeof fetch} [opts.fetch]
    * @param {object | null} [opts.s3]   S3 settings (see s3ConfigFromEnv) or a client; enables s3: URIs.
+   * @param {{ dir: string, maxBytes?: number | string } | null} [opts.cache]   Keeps staged s3: and http(s): inputs between jobs (least recently used removed above maxBytes, default 20 GB).
    */
   constructor({
     slots = { default: 2 },
@@ -46,6 +48,7 @@ export class JobManager extends EventEmitter {
     workerId = null,
     fetch: fetchImpl,
     s3 = null,
+    cache = null,
   } = {}) {
     super();
     this.kinds = normalizeKinds(kinds);
@@ -59,6 +62,7 @@ export class JobManager extends EventEmitter {
     this.executors = { ffmpeg: runFfmpegJob, ...executors };
     this.workerId = workerId;
     this.fetch = fetchImpl;
+    this.cache = cache ? createInputCache({ dir: cache.dir, maxBytes: cache.maxBytes === undefined ? undefined : parseSize(cache.maxBytes) }) : null;
     this.s3 = !s3 ? null : typeof s3.getFile === 'function' ? s3 : createS3Client({ fetch: fetchImpl, ...s3 });
     /** @type {Map<string, JobRecord & { run?: any }>} */
     this.jobs = new Map();
@@ -200,6 +204,7 @@ export class JobManager extends EventEmitter {
       ffmpegPath: this.ffmpegPath,
       fetch: this.fetch,
       s3: this.s3,
+      cache: this.cache,
       setState: (state, extra) => {
         if (extra?.pid) run.pid = extra.pid;
         if (!abort.signal.aborted) record.push({ state, ...(this.workerId ? { workerId: this.workerId } : {}) });

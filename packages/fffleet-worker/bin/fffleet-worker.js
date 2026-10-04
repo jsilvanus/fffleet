@@ -24,6 +24,7 @@ const worker = createWorker({
   advertiseUrl: env.FFFLEET_ADVERTISE_URL || null,
   heartbeatMs: Number(env.FFFLEET_HEARTBEAT_MS ?? 5000),
   s3: s3ConfigFromEnv(env),
+  cache: env.FFFLEET_CACHE_DIR ? { dir: env.FFFLEET_CACHE_DIR, maxBytes: env.FFFLEET_CACHE_MAX_SIZE || undefined } : null,
   log: msg => console.log(`[fffleet-worker] ${msg}`),
 });
 
