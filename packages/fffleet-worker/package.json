@@ -1,0 +1,48 @@
+{
+  "name": "fffleet-worker",
+  "version": "0.0.0",
+  "description": "fffleet worker daemon: runs ffmpeg jobs and serves the fffleet job API",
+  "type": "module",
+  "main": "./src/worker.js",
+  "exports": {
+    ".": "./src/worker.js",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "fffleet-worker": "./bin/fffleet-worker.js"
+  },
+  "files": [
+    "src",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "fffleet": "^0.0.0"
+  },
+  "keywords": [
+    "ffmpeg",
+    "fffleet",
+    "worker"
+  ],
+  "author": "Juha Itäleino <jsilvanus@gmail.com>",
+  "license": "EUPL-1.2",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jsilvanus/fffleet.git",
+    "directory": "packages/fffleet-worker"
+  },
+  "bugs": {
+    "url": "https://github.com/jsilvanus/fffleet/issues"
+  },
+  "homepage": "https://github.com/jsilvanus/fffleet#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

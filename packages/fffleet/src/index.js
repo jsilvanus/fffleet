@@ -1,0 +1,11 @@
+export { createFleet, JobHandle } from './client.js';
+export {
+  CONTRACT_VERSION, KINDS, STATES, isFinal, validateSpec, parseSpec, ContractError,
+  resolvePlaceholders, canonicalJson, FILE_SCHEMES, HTTP_SCHEMES, PASSTHROUGH_SCHEMES,
+} from './contract.js';
+export { JobManager, normalizeSlots } from './job-manager.js';
+export { JobRecord, FleetError, byPriority, pruneFinished } from './job-record.js';
+export { runFfmpegJob } from './executor.js';
+export { createProgressParser } from './progress.js';
+export { detectCapabilities, satisfies } from './capabilities.js';
+export { readSse, followJobEvents } from './sse.js';

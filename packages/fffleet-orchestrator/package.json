@@ -1,0 +1,48 @@
+{
+  "name": "fffleet-orchestrator",
+  "version": "0.0.0",
+  "description": "fffleet orchestrator: schedules ffmpeg jobs across a pool of fffleet workers",
+  "type": "module",
+  "main": "./src/orchestrator.js",
+  "exports": {
+    ".": "./src/orchestrator.js",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "fffleet-orchestrator": "./bin/fffleet-orchestrator.js"
+  },
+  "files": [
+    "src",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "fffleet": "^0.0.0"
+  },
+  "keywords": [
+    "ffmpeg",
+    "fffleet",
+    "orchestrator"
+  ],
+  "author": "Juha Itäleino <jsilvanus@gmail.com>",
+  "license": "EUPL-1.2",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jsilvanus/fffleet.git",
+    "directory": "packages/fffleet-orchestrator"
+  },
+  "bugs": {
+    "url": "https://github.com/jsilvanus/fffleet/issues"
+  },
+  "homepage": "https://github.com/jsilvanus/fffleet#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

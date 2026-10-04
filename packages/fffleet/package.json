@@ -1,0 +1,54 @@
+{
+  "name": "fffleet",
+  "version": "0.0.0",
+  "description": "Run ffmpeg jobs locally, on one worker or across a pool, through one client and one job contract",
+  "type": "module",
+  "main": "./src/index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./server": {
+      "types": "./server.d.ts",
+      "default": "./src/server.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "index.d.ts",
+    "server.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "ffmpeg",
+    "job-queue",
+    "worker",
+    "orchestrator",
+    "transcoding",
+    "streaming"
+  ],
+  "author": "Juha Itäleino <jsilvanus@gmail.com>",
+  "license": "EUPL-1.2",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jsilvanus/fffleet.git",
+    "directory": "packages/fffleet"
+  },
+  "bugs": {
+    "url": "https://github.com/jsilvanus/fffleet/issues"
+  },
+  "homepage": "https://github.com/jsilvanus/fffleet#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

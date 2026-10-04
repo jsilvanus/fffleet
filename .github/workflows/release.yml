@@ -1,0 +1,91 @@
+# Release flow (Changesets):
+# 1. A PR adds a changeset (`npm run changeset`) and is merged to main.
+# 2. This workflow opens or updates the "Version Packages" PR, which bumps versions and changelogs.
+# 3. Merging that PR runs this workflow again: it publishes the packages to npm and pushes the
+#    worker and orchestrator images to ghcr.io, tagged with the released version.
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency: release-${{ github.ref }}
+
+permissions:
+  contents: write        # version commits and tags
+  pull-requests: write   # the Version Packages PR
+  id-token: write        # npm provenance (public repositories)
+
+jobs:
+  release:
+    name: Version PR or publish
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - id: changesets
+        uses: changesets/action@v1
+        with:
+          version: npm run version-packages
+          publish: npm run release
+          title: Version Packages
+          commit: 'chore: version packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # npm only signs provenance for public source repositories.
+          NPM_CONFIG_PROVENANCE: ${{ github.event.repository.private == false }}
+      - id: version
+        if: steps.changesets.outputs.published == 'true'
+        run: echo "version=$(node -p "require('./packages/fffleet/package.json').version")" >> "$GITHUB_OUTPUT"
+
+  images:
+    name: Publish ${{ matrix.image }} image
+    needs: release
+    if: needs.release.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image: [worker, orchestrator]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/fffleet-${{ matrix.image }}
+          tags: |
+            type=semver,pattern={{version}},value=v${{ needs.release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.release.outputs.version }}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=fffleet-${{ matrix.image }}
+            org.opencontainers.image.licenses=EUPL-1.2
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/${{ matrix.image }}.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

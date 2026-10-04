@@ -1,0 +1,31 @@
+# An orchestrator and two workers. Clients use http://localhost:5000 with FFFLEET_TOKEN.
+#   FFFLEET_TOKEN=... FFFLEET_WORKER_TOKEN=... docker compose up --build
+# Workers share ./media at /media, so file:///media/... URIs work on every worker.
+services:
+  orchestrator:
+    build: { context: ., dockerfile: docker/orchestrator.Dockerfile }
+    image: ghcr.io/jsilvanus/fffleet-orchestrator:latest
+    environment:
+      FFFLEET_TOKEN: ${FFFLEET_TOKEN:?set FFFLEET_TOKEN}
+      FFFLEET_WORKER_TOKEN: ${FFFLEET_WORKER_TOKEN:?set FFFLEET_WORKER_TOKEN}
+    ports: ["5000:5000"]
+
+  worker-1: &worker
+    build: { context: ., dockerfile: docker/worker.Dockerfile }
+    image: ghcr.io/jsilvanus/fffleet-worker:latest
+    environment: &worker-env
+      FFFLEET_WORKER_ID: worker-1
+      FFFLEET_ADVERTISE_URL: http://worker-1:5100
+      FFFLEET_ORCHESTRATOR_URL: http://orchestrator:5000
+      FFFLEET_WORKER_TOKEN: ${FFFLEET_WORKER_TOKEN:?set FFFLEET_WORKER_TOKEN}
+      FFFLEET_SLOTS: default=2,stream=1
+      FFFLEET_CAPABILITIES: mount:/media
+    volumes: ["./media:/media"]
+    depends_on: [orchestrator]
+
+  worker-2:
+    <<: *worker
+    environment:
+      <<: *worker-env
+      FFFLEET_WORKER_ID: worker-2
+      FFFLEET_ADVERTISE_URL: http://worker-2:5100
