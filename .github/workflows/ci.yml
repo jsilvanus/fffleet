@@ -41,6 +41,27 @@ jobs:
       - name: End-to-end tests (orchestrator + two workers streaming)
         run: npm run test:e2e
 
+  # Windows is supported for running workers and the orchestrator on a spare PC. This job reports
+  # whether the tests pass there; it does not block merging while the support is new.
+  windows:
+    name: Tests (Windows)
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install ffmpeg
+        run: choco install ffmpeg -y --no-progress
+      - run: npm ci
+      - name: Unit tests
+        run: npm run test:unit
+      - name: End-to-end tests
+        run: npm run test:e2e
+
   images:
     name: Build ${{ matrix.image }} image
     runs-on: ubuntu-latest
