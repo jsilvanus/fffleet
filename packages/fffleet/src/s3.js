@@ -5,7 +5,8 @@ import { createHash, createHmac } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { open, readdir, stat } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
-import { Readable } from 'node:stream';
+import { get as httpGet } from 'node:http';
+import { get as httpsGet } from 'node:https';
 import { pipeline } from 'node:stream/promises';
 
 const EMPTY_SHA256 = createHash('sha256').update('').digest('hex');
@@ -141,7 +142,8 @@ export function createS3Client(config) {
     return url;
   }
 
-  async function request(method, bucket, key, { query, headers = {}, body, signal } = {}) {
+  /** The URL and signed headers of a request. */
+  function sign(method, bucket, key, { query, headers = {} } = {}) {
     const url = urlFor(bucket, key, query);
     const amzDate = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
     const signed = {
@@ -152,17 +154,44 @@ export function createS3Client(config) {
     };
     const authorization = signV4({ method, url, headers: signed, payloadHash: UNSIGNED }, creds);
     const { host, ...sendHeaders } = signed;
-    const res = await doFetch(url, { method, headers: { ...sendHeaders, ...headers, authorization }, body, signal, ...(body ? { duplex: 'half' } : {}) });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      const code = text.match(/<Code>([^<]+)<\/Code>/)?.[1];
-      const message = text.match(/<Message>([^<]+)<\/Message>/)?.[1];
-      const err = new Error(`S3 ${method} s3://${bucket}/${key} failed: HTTP ${res.status}${code ? ` ${code}` : ''}${message ? `: ${message}` : ''}`);
-      err.status = res.status;
-      err.s3Code = code;
-      throw err;
-    }
+    return { url, headers: { ...sendHeaders, ...headers, authorization } };
+  }
+
+  function failure(method, bucket, key, status, text) {
+    const code = text.match(/<Code>([^<]+)<\/Code>/)?.[1];
+    const message = text.match(/<Message>([^<]+)<\/Message>/)?.[1];
+    const err = new Error(`S3 ${method} s3://${bucket}/${key} failed: HTTP ${status}${code ? ` ${code}` : ''}${message ? `: ${message}` : ''}`);
+    err.status = status;
+    err.s3Code = code;
+    return err;
+  }
+
+  async function request(method, bucket, key, { query, headers = {}, body, signal } = {}) {
+    const { url, headers: signedHeaders } = sign(method, bucket, key, { query, headers });
+    const res = await doFetch(url, { method, headers: signedHeaders, body, signal, ...(body ? { duplex: 'half' } : {}) });
+    if (!res.ok) throw failure(method, bucket, key, res.status, await res.text().catch(() => ''));
     return res;
+  }
+
+  /**
+   * Streams an object to a file with node:http(s) rather than fetch: undici (Node 24) can hit an internal
+   * assertion when a server closes the connection while a large body is paused by backpressure.
+   */
+  function download(bucket, key, path, signal) {
+    const { url, headers } = sign('GET', bucket, key);
+    return new Promise((resolve, reject) => {
+      const req = (url.protocol === 'https:' ? httpsGet : httpGet)(url, { headers, signal }, res => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          const chunks = [];
+          res.on('data', c => chunks.push(c));
+          res.once('error', reject);
+          res.once('end', () => reject(failure('GET', bucket, key, res.statusCode, Buffer.concat(chunks).toString('utf8').slice(0, 4000))));
+          return;
+        }
+        pipeline(res, createWriteStream(path)).then(resolve, reject);
+      });
+      req.once('error', reject);
+    });
   }
 
   /** Reads and discards a response body: an unread body can trip an assertion in undici (Node 24) when the socket closes. */
@@ -212,8 +241,7 @@ export function createS3Client(config) {
   return {
     /** Downloads an object to a local file. */
     async getFile(bucket, key, path, { signal } = {}) {
-      const res = await request('GET', bucket, key, { signal });
-      await pipeline(Readable.fromWeb(res.body), createWriteStream(path));
+      await download(bucket, key, path, signal);
     },
 
     /** Uploads a local file; large files go up in parts. Returns the size. */
