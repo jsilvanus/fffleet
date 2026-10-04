@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { SCOPES, generateSecret, hashSecret } from 'fffleet';
+import { loadConfig } from '../src/config.js';
 import { createOrchestrator } from '../src/orchestrator.js';
 
 const env = process.env;
@@ -11,7 +12,19 @@ if (process.argv[2] === 'add-client') {
   process.exit(0);
 }
 
+let scaling = null;
+const configPath = env.FFFLEET_CONFIG || (process.argv[2] === '--config' ? process.argv[3] : null);
+if (configPath) {
+  try {
+    scaling = loadConfig(configPath);
+  } catch (err) {
+    console.error(`[fffleet-orchestrator] ${err.message}`);
+    process.exit(1);
+  }
+}
+
 const orchestrator = createOrchestrator({
+  scaling,
   port: Number(env.PORT ?? 5000),
   host: env.HOST ?? '0.0.0.0',
   token: env.FFFLEET_TOKEN || null,
@@ -25,6 +38,9 @@ const orchestrator = createOrchestrator({
 });
 
 await orchestrator.start();
+if (scaling && !env.FFFLEET_SIGNING_KEY_FILE && !scaling.autoscale.joinSecret && scaling.pools.some(p => p.provider !== 'process')) {
+  log('no FFFLEET_SIGNING_KEY_FILE or autoscale.joinSecret: workers started before a restart cannot rejoin and are removed after the boot timeout');
+}
 if (env.FFFLEET_CLIENTS_FILE && !env.FFFLEET_SIGNING_KEY_FILE) log('FFFLEET_SIGNING_KEY_FILE is not set: tokens stop working when the orchestrator restarts, and apps log in again');
 
 for (const sig of ['SIGINT', 'SIGTERM']) {

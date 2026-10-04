@@ -12,6 +12,7 @@ const worker = createWorker({
   // Behind an orchestrator the worker usually accepts the same token it registers with.
   token: env.FFFLEET_TOKEN || env.FFFLEET_WORKER_TOKEN || null,
   slots: env.FFFLEET_SLOTS || 'default=2',
+  kinds: env.FFFLEET_KINDS || undefined,
   ffmpegPath: env.FFMPEG_PATH || 'ffmpeg',
   // An orchestrator's /v1/auth/keys: apps and Prometheus can then use the tokens it issued on this worker too.
   // Only when a static token is set; a worker with no token stays open, as before.

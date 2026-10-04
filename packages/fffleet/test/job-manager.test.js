@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { JobManager, normalizeSlots } from '../src/index.js';
+import { JobManager, normalizeSlots, normalizeKinds, autoSlots } from '../src/index.js';
 import { averageColor, collect, fakeExecutor, fakeSpec, near, tempDir, tick, until } from './helpers.js';
 
 const tmp = await tempDir();
@@ -21,6 +21,26 @@ test('normalizeSlots parses strings and rejects nonsense', () => {
   assert.throws(() => normalizeSlots('default=-1'));
   assert.throws(() => normalizeSlots('Bad=1'));
   assert.throws(() => normalizeSlots({}));
+});
+
+test('slots: auto sizes pools from the CPU count and the kinds', () => {
+  assert.deepEqual(autoSlots({ cpus: 8, kinds: ['batch'] }), { default: 4 });
+  assert.deepEqual(autoSlots({ cpus: 8, kinds: ['stream'] }), { default: 8 });
+  assert.deepEqual(autoSlots({ cpus: 8, kinds: ['stream', 'batch'] }), { default: 4, stream: 2 });
+  assert.deepEqual(autoSlots({ cpus: 1, kinds: ['batch'] }), { default: 1 });
+  assert.deepEqual(normalizeSlots('auto:4', { cpus: 16, kinds: ['batch'] }), { default: 4 });
+  assert.deepEqual(normalizeSlots('auto:1', { cpus: 6, kinds: ['stream', 'batch'] }), { default: 6 });
+  assert.deepEqual(normalizeSlots('auto', { cpus: 8, kinds: ['batch'] }), { default: 4 });
+  assert.throws(() => normalizeSlots('auto:0'), /above 0/);
+});
+
+test('kinds: parsed, defaulted and enforced', async () => {
+  assert.deepEqual([...normalizeKinds('batch')], ['batch']);
+  assert.deepEqual([...normalizeKinds(undefined)].sort(), ['batch', 'stream']);
+  assert.throws(() => normalizeKinds('video'), /invalid job kind/);
+  const { m } = manager({ kinds: ['batch'], slots: { default: 1 } });
+  assert.throws(() => m.submit({ ...fakeSpec('s'), kind: 'stream' }), err => err.status === 422 && err.code === 'UNSUPPORTED_KIND');
+  await m.close();
 });
 
 test('runs up to the slot count and queues the rest', async () => {

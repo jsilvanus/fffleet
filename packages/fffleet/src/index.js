@@ -3,7 +3,7 @@ export {
   CONTRACT_VERSION, KINDS, STATES, isFinal, validateSpec, parseSpec, ContractError,
   resolvePlaceholders, canonicalJson, implicitRequirements, FILE_SCHEMES, HTTP_SCHEMES, PASSTHROUGH_SCHEMES, OBJECT_SCHEMES,
 } from './contract.js';
-export { JobManager, normalizeSlots } from './job-manager.js';
+export { JobManager, normalizeSlots, normalizeKinds, autoSlots } from './job-manager.js';
 export { JobRecord, FleetError, byPriority, pruneFinished } from './job-record.js';
 export { runFfmpegJob } from './executor.js';
 export { createProgressParser } from './progress.js';

@@ -12,7 +12,8 @@ docker run -p 5100:5100 -e FFFLEET_TOKEN=secret ghcr.io/jsilvanus/fffleet-worker
 | `PORT`, `HOST` | `5100`, `0.0.0.0` | |
 | `FFFLEET_TOKEN` | `FFFLEET_WORKER_TOKEN` | Bearer token callers must send (full access, and what the orchestrator uses). With neither set the API is open. |
 | `FFFLEET_KEYS_URL` | the orchestrator's `/v1/auth/keys` when a token and an orchestrator are set | Also accept tokens the orchestrator issued, with their scopes. |
-| `FFFLEET_SLOTS` | `default=2` | Slot pools, e.g. `default=2,stream=1`. |
+| `FFFLEET_SLOTS` | `default=2` | Slot pools, e.g. `default=2,stream=1`, or `auto` (from the CPU count) / `auto:4` (4 cores per slot). |
+| `FFFLEET_KINDS` | `batch,stream` | Job kinds this worker takes. Others get 422 `UNSUPPORTED_KIND`, and the orchestrator does not send them. |
 | `FFFLEET_CAPABILITIES` | | Extra capabilities, comma separated, e.g. `mount:/media,site:hel1`. |
 | `FFFLEET_ORCHESTRATOR_URL` | | Register and heartbeat here. |
 | `FFFLEET_WORKER_TOKEN` | | Token for the orchestrator. |
