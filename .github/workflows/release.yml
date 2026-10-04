@@ -14,7 +14,7 @@ concurrency: release-${{ github.ref }}
 permissions:
   contents: write        # version commits and tags
   pull-requests: write   # the Version Packages PR
-  id-token: write        # npm provenance (public repositories)
+  id-token: write        # npm trusted publishing (OIDC) and provenance
 
 jobs:
   release:
@@ -29,7 +29,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or newer; Node 22 ships npm 10.
+      - run: npm install -g npm@^11.5.1
       - run: npm ci
       - id: changesets
         uses: changesets/action@v1
@@ -40,8 +41,8 @@ jobs:
           commit: 'chore: version packages'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # No NPM_TOKEN: npm authenticates with the workflow's OIDC token (trusted publishing,
+          # configured on npmjs.com for release.yml in this repository).
           # npm only signs provenance for public source repositories.
           NPM_CONFIG_PROVENANCE: ${{ github.event.repository.private == false }}
       - id: version

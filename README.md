@@ -90,7 +90,7 @@ Releases use [Changesets](https://github.com/changesets/changesets):
 
 1. A pull request with a user-visible change adds a changeset (`npm run changeset`).
 2. On `main`, the release workflow keeps a **Version Packages** pull request up to date.
-3. Merging that pull request publishes the three packages to npm and pushes both images to ghcr.io under the new version.
+3. Merging that pull request publishes the three packages to npm (trusted publishing, no token) and pushes both images to ghcr.io under the new version.
 
 The three packages always share a version.
 

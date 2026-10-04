@@ -9,7 +9,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "fffleet-worker": "./bin/fffleet-worker.js"
+    "fffleet-worker": "bin/fffleet-worker.js"
   },
   "files": [
     "src",
