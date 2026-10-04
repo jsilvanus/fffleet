@@ -145,6 +145,7 @@ test('metrics: slots, running ffmpeg speed and processes, and bytes staged in an
     assert.match(text, /fffleet_host_cpus [1-9]/);
     assert.match(text, /fffleet_workdir_free_bytes [1-9]/);
     w.manager.cancel('live');
+    await until(() => w.manager.get('live').state === 'cancelled', 10000);
 
     // A batch job that uploads its output over HTTP counts the bytes it sent.
     const done = w.manager.submit({
