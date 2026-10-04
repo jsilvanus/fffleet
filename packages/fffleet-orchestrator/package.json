@@ -9,7 +9,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "fffleet-orchestrator": "./bin/fffleet-orchestrator.js"
+    "fffleet-orchestrator": "bin/fffleet-orchestrator.js"
   },
   "files": [
     "src",
