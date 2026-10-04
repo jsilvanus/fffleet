@@ -29,9 +29,15 @@ jobs:
           cache: npm
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Start an S3 server (versitygw)
+        run: |
+          docker run -d --name s3 -p 7070:7070 versity/versitygw:latest --access fffleetkey --secret fffleetsecret posix /tmp
+          for i in $(seq 1 30); do curl -s -o /dev/null localhost:7070 && break; sleep 1; done
       - run: npm ci
       - name: Unit tests
         run: npm run test:unit
+        env:
+          FFFLEET_TEST_S3_ENDPOINT: http://127.0.0.1:7070
       - name: End-to-end tests (orchestrator + two workers streaming)
         run: npm run test:e2e
 

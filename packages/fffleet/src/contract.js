@@ -22,8 +22,13 @@ export const FILE_SCHEMES = Object.freeze(['file:']);
 export const HTTP_SCHEMES = Object.freeze(['http:', 'https:']);
 /** Handed to ffmpeg as they are (live sources and destinations). */
 export const PASSTHROUGH_SCHEMES = Object.freeze(['rtmp:', 'rtmps:', 'srt:', 'udp:', 'tcp:', 'rtsp:', 'rtp:']);
+/**
+ * Object storage, staged by a worker that holds the credentials (batch jobs only).
+ * s3://bucket/key is one object; s3://bucket/prefix/ (trailing slash) is an output folder.
+ */
+export const OBJECT_SCHEMES = Object.freeze(['s3:']);
 
-const ALL_SCHEMES = new Set([...FILE_SCHEMES, ...HTTP_SCHEMES, ...PASSTHROUGH_SCHEMES]);
+const ALL_SCHEMES = new Set([...FILE_SCHEMES, ...HTTP_SCHEMES, ...PASSTHROUGH_SCHEMES, ...OBJECT_SCHEMES]);
 
 const ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
 const NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -93,6 +98,7 @@ export function validateSpec(input) {
 
   const inputs = normalizeEndpoints(s.inputs, 'inputs', err);
   const outputs = normalizeEndpoints(s.outputs, 'outputs', err);
+  checkObjectEndpoints(s.kind, inputs, outputs, err);
 
   let ffmpeg;
   if (type === 'ffmpeg') {
@@ -167,6 +173,44 @@ function normalizeEndpoints(list, path, err) {
     }
     return out;
   });
+}
+
+function checkObjectEndpoints(kind, inputs, outputs, err) {
+  const check = (list, path, isOutput) => list.forEach((e, i) => {
+    let url;
+    try {
+      url = new URL(e.uri);
+    } catch {
+      return;
+    }
+    if (url.protocol !== 's3:') return;
+    const p = `${path}[${i}].uri`;
+    if (kind === 'stream') err(p, 's3: is only supported for batch jobs');
+    if (!url.hostname) err(p, 's3: URIs need a bucket: s3://bucket/key');
+    const key = url.pathname.replace(/^\//, '');
+    const rootFolder = isOutput && url.pathname === '/';
+    if (!key && !rootFolder) err(p, 's3: URIs need a key: s3://bucket/key');
+    else if (key.endsWith('/') && !isOutput) err(p, 'an input must name one object, not a folder');
+  });
+  check(inputs, 'inputs', false);
+  check(outputs, 'outputs', true);
+}
+
+/**
+ * Capabilities a job needs beyond its `requires`: `type:<type>`, plus `scheme:s3` when it uses s3: URIs.
+ * @param {{ type: string, inputs: { uri: string }[], outputs: { uri: string }[] }} spec
+ */
+export function implicitRequirements(spec) {
+  const reqs = [`type:${spec.type}`];
+  const schemes = new Set([...spec.inputs, ...spec.outputs].map(e => {
+    try {
+      return new URL(e.uri).protocol;
+    } catch {
+      return null;
+    }
+  }));
+  for (const scheme of OBJECT_SCHEMES) if (schemes.has(scheme)) reqs.push(`scheme:${scheme.slice(0, -1)}`);
+  return reqs;
 }
 
 function checkPlaceholders(args, inputs, outputs, err) {

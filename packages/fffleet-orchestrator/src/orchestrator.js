@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { FleetError, JobRecord, byPriority, canonicalJson, followJobEvents, normalizeSlots, parseSpec, pruneFinished, satisfies } from 'fffleet';
+import { FleetError, JobRecord, byPriority, canonicalJson, followJobEvents, implicitRequirements, normalizeSlots, parseSpec, pruneFinished, satisfies } from 'fffleet';
 import { checkBearer, close, createApiHandler, listen, readJson, send, sendError } from 'fffleet/server';
 
 const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -67,7 +67,7 @@ export function createOrchestrator({
     const pool = poolFor(worker, job.spec.class);
     const total = worker.slots[pool] ?? 0;
     return total > 0 && (worker.used[pool] ?? 0) < total
-      && worker.capabilities.has(`type:${job.spec.type}`) && satisfies(worker.capabilities, job.spec.requires);
+      && satisfies(worker.capabilities, implicitRequirements(job.spec)) && satisfies(worker.capabilities, job.spec.requires);
   }
 
   function load(worker) {

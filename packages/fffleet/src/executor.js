@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import { mkdir, open, stat } from 'node:fs/promises';
+import { mkdir, open, readdir, stat } from 'node:fs/promises';
 import { dirname, extname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { HTTP_SCHEMES, resolvePlaceholders } from './contract.js';
 import { FleetError } from './job-record.js';
 import { createProgressParser } from './progress.js';
+import { parseS3Uri } from './s3.js';
 
 const STDERR_TAIL_BYTES = 8 * 1024;
 const KILL_GRACE_MS = 5000;
@@ -21,6 +22,7 @@ const KILL_GRACE_MS = 5000;
  * @property {(stdin: import('node:stream').Writable | null) => void} attachStdin
  * @property {string} [ffmpegPath]
  * @property {typeof fetch} [fetch]
+ * @property {ReturnType<typeof import('./s3.js').createS3Client> | null} [s3]   Needed for s3: URIs.
  */
 
 /**
@@ -35,14 +37,19 @@ export async function runFfmpegJob(spec, rt) {
   const doFetch = rt.fetch ?? globalThis.fetch;
   const batch = spec.kind === 'batch';
   const values = { input: {}, output: {} };
+  const scheme = e => new URL(e.uri).protocol;
 
-  const needsStaging = batch && spec.inputs.some(i => HTTP_SCHEMES.includes(new URL(i.uri).protocol));
+  if (!rt.s3 && [...spec.inputs, ...spec.outputs].some(e => scheme(e) === 's3:')) {
+    throw new FleetError('UNSUPPORTED_SCHEME', 'this runner has no S3 credentials for s3: URIs');
+  }
+
+  const needsStaging = batch && spec.inputs.some(i => HTTP_SCHEMES.includes(scheme(i)) || scheme(i) === 's3:');
   if (needsStaging) rt.setState('staging');
   for (const input of spec.inputs) {
     values.input[input.name] = await stageInput(input, { batch, rt, doFetch });
   }
 
-  /** @type {{ name: string, uri: string, local: string | null, upload: boolean, contentType?: string }[]} */
+  /** @type {{ name: string, uri: string, local: string | null, upload: false | 'http' | 's3', folder?: boolean, contentType?: string }[]} */
   const outputs = [];
   for (const output of spec.outputs) {
     const url = new URL(output.uri);
@@ -54,7 +61,15 @@ export async function runFfmpegJob(spec, rt) {
     } else if (batch && HTTP_SCHEMES.includes(url.protocol)) {
       const path = join(rt.workDir, 'out', `${output.name}${extname(url.pathname)}`);
       await mkdir(dirname(path), { recursive: true });
-      outputs.push({ name: output.name, uri: output.uri, local: path, upload: true, contentType: output.contentType });
+      outputs.push({ name: output.name, uri: output.uri, local: path, upload: 'http', contentType: output.contentType });
+      values.output[output.name] = path;
+    } else if (url.protocol === 's3:') {
+      const { key } = parseS3Uri(output.uri);
+      const folder = key === '' || key.endsWith('/');
+      // A folder output is a directory ffmpeg writes into, e.g. {{output:hls}}/index.m3u8.
+      const path = join(rt.workDir, 'out', folder ? output.name : `${output.name}${extname(key)}`);
+      await mkdir(folder ? path : dirname(path), { recursive: true });
+      outputs.push({ name: output.name, uri: output.uri, local: path, upload: 's3', folder, contentType: output.contentType });
       values.output[output.name] = path;
     } else {
       outputs.push({ name: output.name, uri: output.uri, local: null, upload: false });
@@ -83,12 +98,14 @@ export async function runFfmpegJob(spec, rt) {
     let bytes = null;
     if (o.local) {
       try {
-        bytes = (await stat(o.local)).size;
+        bytes = o.folder ? ((await readdir(o.local)).length ? 0 : null) : (await stat(o.local)).size;
       } catch {
-        if (batch) throw new FleetError('OUTPUT_MISSING', `ffmpeg did not write output "${o.name}"`, { details: { exitCode, stderrTail } });
+        bytes = null;
       }
+      if (bytes === null && batch) throw new FleetError('OUTPUT_MISSING', `ffmpeg did not write output "${o.name}"`, { details: { exitCode, stderrTail } });
     }
-    if (o.upload) await uploadOutput(o, { rt, doFetch });
+    if (o.upload === 'http') await uploadOutput(o, { rt, doFetch });
+    if (o.upload === 's3') bytes = await uploadS3Output(o, rt);
     results.push({ name: o.name, uri: o.uri, bytes });
   }
   return { exitCode, outputs: results, stderrTail };
@@ -107,6 +124,18 @@ async function stageInput(input, { batch, rt, doFetch }) {
     }
     return path;
   }
+  if (batch && url.protocol === 's3:') {
+    const { bucket, key } = parseS3Uri(input.uri);
+    const path = join(rt.workDir, 'in', `${input.name}${extname(key)}`);
+    await mkdir(dirname(path), { recursive: true });
+    try {
+      await rt.s3.getFile(bucket, key, path, { signal: rt.signal });
+    } catch (err) {
+      if (rt.signal.aborted) throw rt.signal.reason;
+      throw new FleetError('INPUT_FAILED', `could not fetch input "${input.name}": ${err.message}`);
+    }
+    return path;
+  }
   if (!batch || !HTTP_SCHEMES.includes(url.protocol)) return input.uri;
 
   const path = join(rt.workDir, 'in', `${input.name}${extname(url.pathname)}`);
@@ -121,6 +150,18 @@ async function stageInput(input, { batch, rt, doFetch }) {
   if (!res.ok || !res.body) throw new FleetError('INPUT_FAILED', `could not fetch input "${input.name}": HTTP ${res.status}`);
   await pipeline(Readable.fromWeb(res.body), createWriteStream(path));
   return path;
+}
+
+async function uploadS3Output(o, rt) {
+  const { bucket, key } = parseS3Uri(o.uri);
+  try {
+    return o.folder
+      ? await rt.s3.putDirectory(bucket, key, o.local, { signal: rt.signal })
+      : await rt.s3.putFile(bucket, key, o.local, { contentType: o.contentType, signal: rt.signal });
+  } catch (err) {
+    if (rt.signal.aborted) throw rt.signal.reason;
+    throw new FleetError('UPLOAD_FAILED', `upload of output "${o.name}" failed: ${err.message}`);
+  }
 }
 
 async function uploadOutput(o, { rt, doFetch }) {

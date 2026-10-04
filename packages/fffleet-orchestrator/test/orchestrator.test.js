@@ -276,3 +276,21 @@ test('stdin is forwarded to the worker running the job', async () => {
   await job.cancel();
   await job.done;
 });
+
+test('s3: jobs go only to workers with S3 credentials', async () => {
+  const o = await orchestrator();
+  // The fake executor never touches storage; a stub client is enough to enable the scheme.
+  const stubS3 = { getFile() {}, putFile() {}, putDirectory() {} };
+  const plain = await worker(o, 'plain', { slots: { default: 2 } });
+  const s3w = await worker(o, 's3w', { slots: { default: 2 }, s3: stubS3 });
+  assert.ok(s3w.w.capabilities.includes('scheme:s3'));
+  assert.ok(!plain.w.capabilities.includes('scheme:s3'));
+  const fleet = client(o);
+  for (const id of ['s3a', 's3b']) {
+    const job = await fleet.submit(fakeJob(id, { outputs: [{ name: 'o', uri: `s3://bucket/${id}.mp4` }] }));
+    await until(() => s3w.controls.has(id));
+    s3w.controls.get(id).release();
+    assert.equal((await job.done).workerId, 's3w');
+  }
+  assert.equal(plain.controls.size, 0);
+});

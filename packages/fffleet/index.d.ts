@@ -9,6 +9,7 @@ export const STATES: readonly JobState[];
 export const FILE_SCHEMES: readonly string[];
 export const HTTP_SCHEMES: readonly string[];
 export const PASSTHROUGH_SCHEMES: readonly string[];
+export const OBJECT_SCHEMES: readonly string[];
 
 export type JobKind = 'stream' | 'batch';
 export type JobState = 'queued' | 'assigned' | 'staging' | 'running' | 'uploading' | 'succeeded' | 'failed' | 'cancelled';
@@ -16,7 +17,10 @@ export type JobState = 'queued' | 'assigned' | 'staging' | 'running' | 'uploadin
 export interface Endpoint {
   /** Name used in placeholders: {{input:name}} / {{output:name}}. */
   name: string;
-  /** file:, http(s): (staged for batch jobs) or a live scheme such as rtmp:, srt:, udp:. */
+  /**
+   * file:, http(s): (staged for batch jobs), s3://bucket/key (batch jobs; a key ending in "/" is an
+   * output folder) or a live scheme such as rtmp:, srt:, udp:.
+   */
   uri: string;
   /** Content-Type sent when an http(s) output is uploaded. */
   contentType?: string;
@@ -128,6 +132,8 @@ export function validateSpec(input: unknown): { ok: true; spec: JobSpec } | { ok
 export function parseSpec(input: unknown): JobSpec;
 export function resolvePlaceholders(args: string[], values: { input: Record<string, string>; output: Record<string, string> }): string[];
 export function canonicalJson(value: unknown): string;
+/** Capabilities a job needs beyond `requires`: `type:<type>`, plus `scheme:s3` for s3: URIs. */
+export function implicitRequirements(spec: Pick<JobSpec, 'type' | 'inputs' | 'outputs'>): string[];
 
 export interface ExecutorRuntime {
   workDir: string;
@@ -137,6 +143,7 @@ export interface ExecutorRuntime {
   attachStdin(stdin: Writable | null): void;
   ffmpegPath?: string;
   fetch?: typeof fetch;
+  s3?: S3Client | null;
 }
 
 export interface ExecutorResult {
@@ -158,6 +165,8 @@ export interface JobManagerOptions {
   executors?: Record<string, Executor>;
   workerId?: string | null;
   fetch?: typeof fetch;
+  /** S3 settings or a client; enables s3: URIs. */
+  s3?: S3Config | S3Client | null;
 }
 
 export interface PoolStats {
@@ -253,3 +262,37 @@ export class JobRecord {
 
 export function byPriority(a: JobRecord, b: JobRecord): number;
 export function pruneFinished(jobs: Map<string, JobRecord>, keep: number): void;
+
+export interface S3Config {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+  /** Defaults to us-east-1. */
+  region?: string;
+  /** For S3-compatible stores, e.g. http://minio:9000. Defaults to AWS for the region. */
+  endpoint?: string;
+  /** Bucket in the path rather than the host name; defaults to true when `endpoint` is set. */
+  pathStyle?: boolean;
+  fetch?: typeof fetch;
+  /** Multipart part size in bytes (16 MiB by default; S3 needs at least 5 MiB). */
+  partSize?: number;
+}
+
+export interface S3Client {
+  getFile(bucket: string, key: string, path: string, opts?: { signal?: AbortSignal }): Promise<void>;
+  putFile(bucket: string, key: string, path: string, opts?: { contentType?: string; signal?: AbortSignal; forceMultipart?: boolean }): Promise<number>;
+  putDirectory(bucket: string, prefix: string, dir: string, opts?: { signal?: AbortSignal }): Promise<number>;
+  deleteObject(bucket: string, key: string, opts?: { signal?: AbortSignal }): Promise<void>;
+  createBucket(bucket: string, opts?: { signal?: AbortSignal }): Promise<void>;
+}
+
+export function createS3Client(config: S3Config): S3Client;
+/** Reads AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, AWS_REGION, FFFLEET_S3_ENDPOINT, FFFLEET_S3_PATH_STYLE. */
+export function s3ConfigFromEnv(env?: Record<string, string | undefined>): S3Config | null;
+export function parseS3Uri(uri: string): { bucket: string; key: string };
+export function contentTypeFor(name: string): string;
+export function signV4(
+  req: { method: string; url: URL; headers: Record<string, string>; payloadHash: string },
+  creds: { accessKeyId: string; secretAccessKey: string; region: string },
+  service?: string,
+): string;

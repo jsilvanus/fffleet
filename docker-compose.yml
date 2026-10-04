@@ -20,6 +20,12 @@ services:
       FFFLEET_WORKER_TOKEN: ${FFFLEET_WORKER_TOKEN:?set FFFLEET_WORKER_TOKEN}
       FFFLEET_SLOTS: default=2,stream=1
       FFFLEET_CAPABILITIES: mount:/media
+      # For s3:// inputs and outputs (empty = disabled):
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      FFFLEET_S3_ENDPOINT: ${FFFLEET_S3_ENDPOINT:-}
+      FFFLEET_S3_PATH_STYLE: ${FFFLEET_S3_PATH_STYLE:-}
     volumes: ["./media:/media"]
     depends_on: [orchestrator]
 
