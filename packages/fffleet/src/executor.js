@@ -20,6 +20,7 @@ const KILL_GRACE_MS = 5000;
  * @property {(state: string, extra?: object) => void} setState
  * @property {(progress: object) => void} progress
  * @property {(stdin: import('node:stream').Writable | null) => void} attachStdin
+ * @property {(direction: 'in' | 'out', scheme: string, bytes: number) => void} [transfer]   Counts staged and uploaded bytes.
  * @property {string} [ffmpegPath]
  * @property {typeof fetch} [fetch]
  * @property {ReturnType<typeof import('./s3.js').createS3Client> | null} [s3]   Needed for s3: URIs.
@@ -46,7 +47,9 @@ export async function runFfmpegJob(spec, rt) {
   const needsStaging = batch && spec.inputs.some(i => HTTP_SCHEMES.includes(scheme(i)) || scheme(i) === 's3:');
   if (needsStaging) rt.setState('staging');
   for (const input of spec.inputs) {
-    values.input[input.name] = await stageInput(input, { batch, rt, doFetch });
+    const local = await stageInput(input, { batch, rt, doFetch });
+    values.input[input.name] = local;
+    if (local !== input.uri && scheme(input) !== 'file:') rt.transfer?.('in', scheme(input).slice(0, -1), (await stat(local)).size);
   }
 
   /** @type {{ name: string, uri: string, local: string | null, upload: false | 'http' | 's3', folder?: boolean, contentType?: string }[]} */
@@ -106,6 +109,7 @@ export async function runFfmpegJob(spec, rt) {
     }
     if (o.upload === 'http') await uploadOutput(o, { rt, doFetch });
     if (o.upload === 's3') bytes = await uploadS3Output(o, rt);
+    if (o.upload) rt.transfer?.('out', scheme(o).slice(0, -1), bytes ?? 0);
     results.push({ name: o.name, uri: o.uri, bytes });
   }
   return { exitCode, outputs: results, stderrTail };

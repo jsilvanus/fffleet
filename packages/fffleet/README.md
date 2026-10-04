@@ -7,7 +7,7 @@ import { createFleet } from 'fffleet';
 
 const fleet = createFleet({
   url: process.env.FFFLEET_URL,     // omit to always run locally
-  token: process.env.FFFLEET_TOKEN,
+  token: process.env.FFFLEET_TOKEN, // or log in as an app: clientId + clientSecret (refreshed automatically)
   fallback: 'local',                // run here if the fleet is unreachable (default); 'none' to throw
   local: { slots: { default: 2 } }, // options for the local runner
 });

@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { FleetError, JobRecord, byPriority, canonicalJson, followJobEvents, implicitRequirements, normalizeSlots, parseSpec, pruneFinished, satisfies } from 'fffleet';
-import { checkBearer, close, createApiHandler, listen, readJson, send, sendError } from 'fffleet/server';
+import {
+  Registry, allowed, checkBearer, close, createApiHandler, createAuthenticator, createClientStore, createTokenSigner, createTokenVerifier,
+  issueToken, jobMetrics, listen, loadSigningKey, processMetrics, readBody, readJson, send, sendError,
+} from 'fffleet/server';
 
 const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 const REDISPATCH_DELAY_MS = 500;
@@ -16,7 +19,11 @@ const REDISPATCH_DELAY_MS = 500;
  * @param {object} [opts]
  * @param {number} [opts.port]
  * @param {string} [opts.host]
- * @param {string | null} [opts.token]          Bearer token for clients.
+ * @param {string | null} [opts.token]          Static bearer token with full (admin) access.
+ * @param {string | object[] | null} [opts.clients]  Apps that may log in: a clients file path, or a list of { id, secretHash, scopes }.
+ * @param {import('node:crypto').KeyObject | string | null} [opts.signingKey]  Ed25519 key for tokens (KeyObject or PEM).
+ * @param {string | null} [opts.signingKeyFile] Where the signing key is kept; created when missing. Without it tokens die with the process.
+ * @param {number} [opts.tokenTtlSeconds]
  * @param {string | null} [opts.workerToken]    Bearer token workers register with; also sent to workers.
  * @param {number} [opts.heartbeatTimeoutMs]    A worker silent this long is dropped and its jobs fail.
  * @param {number} [opts.sweepMs]
@@ -30,6 +37,10 @@ export function createOrchestrator({
   port = 5000,
   host = '0.0.0.0',
   token = null,
+  clients = null,
+  signingKey = null,
+  signingKeyFile = null,
+  tokenTtlSeconds = 3600,
   workerToken = null,
   heartbeatTimeoutMs = 15000,
   sweepMs = 1000,
@@ -49,6 +60,48 @@ export function createOrchestrator({
   let url = null;
   let sweeper = null;
   let pumpTimer = null;
+
+  const clientStore = createClientStore(clients);
+  const signer = createTokenSigner({ privateKey: signingKey ?? loadSigningKey(signingKeyFile), ttlSeconds: tokenTtlSeconds });
+  const authenticate = createAuthenticator({
+    token,
+    verify: clientStore ? createTokenVerifier({ getKey: kid => (kid === signer.kid ? signer.publicKey : null) }) : null,
+    isActive: sub => clientStore?.has(sub) ?? false,
+  });
+
+  const registry = new Registry();
+  processMetrics(registry);
+  const jobStats = jobMetrics(registry, () => jobs.values());
+  const m = {
+    info: registry.gauge('fffleet_build_info', 'Version of this fffleet process.', ['role', 'version']),
+    workerSlots: registry.gauge('fffleet_worker_slots', 'Slots per worker and pool.', ['worker', 'pool']),
+    workerUsed: registry.gauge('fffleet_worker_slots_used', 'Slots in use per worker and pool.', ['worker', 'pool']),
+    workerAge: registry.gauge('fffleet_worker_heartbeat_age_seconds', 'Seconds since the worker last registered or sent a heartbeat.', ['worker']),
+    workerDraining: registry.gauge('fffleet_worker_draining', '1 while the worker is drained.', ['worker']),
+    workerCooldown: registry.gauge('fffleet_worker_cooldown', '1 while the worker gets no new jobs after a failed dispatch.', ['worker']),
+    workers: registry.gauge('fffleet_workers', 'Registered workers.'),
+    queued: registry.gauge('fffleet_queue_length', 'Jobs waiting for a worker, by class.', ['class']),
+    dispatchFailures: registry.counter('fffleet_dispatch_failures_total', 'Dispatches a worker did not accept.', ['worker', 'reason']),
+    workersLost: registry.counter('fffleet_workers_lost_total', 'Workers dropped after missing their heartbeats.'),
+    tokensIssued: registry.counter('fffleet_auth_tokens_issued_total', 'Tokens issued, by client.', ['client']),
+    loginFailures: registry.counter('fffleet_auth_login_failures_total', 'Token requests refused, by OAuth2 error.', ['error']),
+  };
+  m.info.set({ role: 'orchestrator', version: VERSION }, 1);
+  registry.collect(() => {
+    for (const g of [m.workerSlots, m.workerUsed, m.workerAge, m.workerDraining, m.workerCooldown, m.queued]) g.reset();
+    const now = Date.now();
+    for (const w of workers.values()) {
+      for (const [pool, total] of Object.entries(w.slots)) {
+        m.workerSlots.set({ worker: w.id, pool }, total);
+        m.workerUsed.set({ worker: w.id, pool }, w.used[pool] ?? 0);
+      }
+      m.workerAge.set({ worker: w.id }, (now - w.lastSeen) / 1000);
+      m.workerDraining.set({ worker: w.id }, w.draining ? 1 : 0);
+      m.workerCooldown.set({ worker: w.id }, w.cooldownUntil > now ? 1 : 0);
+    }
+    m.workers.set({}, workers.size);
+    for (const job of queue) m.queued.inc({ class: job.spec.class });
+  });
 
   /**
    * @typedef {{ id: string, url: string, slots: Record<string, number>, used: Record<string, number>,
@@ -118,16 +171,19 @@ export function createOrchestrator({
       });
     } catch (err) {
       log(`dispatch of ${job.id} to ${worker.id} failed: ${err.message}; dropping the worker until it re-registers`);
+      m.dispatchFailures.inc({ worker: worker.id, reason: 'unreachable' });
       return redispatch(job, worker);
     }
     if (job.final) return release(job); // cancelled while dispatching; the cancel already reached the worker or will be ignored
     if (res.status >= 500) {
       log(`worker ${worker.id} answered ${res.status} for ${job.id}; trying elsewhere`);
       worker.cooldownUntil = Date.now() + dispatchCooldownMs;
+      m.dispatchFailures.inc({ worker: worker.id, reason: 'server_error' });
       return redispatch(job, worker, false);
     }
     if (!res.ok) {
       const body = await res.json().catch(() => null);
+      m.dispatchFailures.inc({ worker: worker.id, reason: 'rejected' });
       job.push({ state: 'failed', error: { code: 'DISPATCH_REJECTED', message: `worker ${worker.id} rejected the job: ${body?.error?.message ?? `HTTP ${res.status}`}` } });
       return release(job);
     }
@@ -235,6 +291,7 @@ export function createOrchestrator({
     const now = Date.now();
     for (const worker of [...workers.values()]) {
       if (now - worker.lastSeen > heartbeatTimeoutMs) {
+        m.workersLost.inc();
         removeWorker(worker, { code: 'WORKER_LOST', message: `worker ${worker.id} missed its heartbeats` });
       }
     }
@@ -256,6 +313,7 @@ export function createOrchestrator({
       pruneFinished(jobs, keepFinished);
       const job = /** @type {Job} */ (new JobRecord(spec));
       jobs.set(spec.id, job);
+      jobStats.track(job);
       enqueue(job);
       pump();
       return { created: true, queued: queue.includes(job), job: job.snapshot() };
@@ -318,8 +376,29 @@ export function createOrchestrator({
     },
   };
 
-  async function extraRoutes(req, res, reqUrl) {
-    if (reqUrl.pathname === '/v1/workers/register' && req.method === 'POST') {
+  async function extraRoutes(req, res, reqUrl, who) {
+    const path = reqUrl.pathname;
+    if (path === '/v1/auth/token' && req.method === 'POST') {
+      const raw = (await readBody(req, 64 * 1024)).toString('utf8');
+      const json = (req.headers['content-type'] ?? '').includes('application/json');
+      let body;
+      try {
+        body = json ? JSON.parse(raw || '{}') : new URLSearchParams(raw);
+      } catch {
+        body = {};
+      }
+      const out = await issueToken({ req, body, clients: clientStore, signer });
+      if (out.status === 200) m.tokensIssued.inc({ client: out.body.access_token && JSON.parse(Buffer.from(out.body.access_token.split('.')[1], 'base64url')).sub });
+      else m.loginFailures.inc({ error: out.body.error });
+      send(res, out.status, out.body, out.headers);
+      return true;
+    }
+    if (path === '/v1/auth/keys' && req.method === 'GET') {
+      // Public keys are public: workers fetch them to check tokens without holding a secret.
+      send(res, 200, signer.jwks(), { 'cache-control': 'max-age=300' });
+      return true;
+    }
+    if (path === '/v1/workers/register' && req.method === 'POST') {
       if (!checkBearer(req, workerToken)) {
         send(res, 401, { error: { code: 'UNAUTHORIZED', message: 'missing or wrong worker token' } });
         return true;
@@ -331,12 +410,19 @@ export function createOrchestrator({
       }
       return true;
     }
-    const drain = reqUrl.pathname.match(/^\/v1\/workers\/([^/]+)\/drain$/);
-    if ((reqUrl.pathname === '/v1/workers' && req.method === 'GET') || (drain && req.method === 'POST')) {
-      if (!checkBearer(req, token)) {
-        send(res, 401, { error: { code: 'UNAUTHORIZED', message: 'missing or wrong bearer token' } });
-        return true;
+    if (path === '/v1/sd/prometheus' && req.method === 'GET') {
+      // Prometheus HTTP service discovery: one target per worker, scraped at its /metrics.
+      if (allowed(res, who, 'metrics')) {
+        send(res, 200, [...workers.values()].map(w => {
+          const u = new URL(w.url);
+          return { targets: [u.host], labels: { __scheme__: u.protocol.slice(0, -1), __metrics_path__: `${u.pathname.replace(/\/+$/, '')}/metrics`, fffleet_worker: w.id } };
+        }));
       }
+      return true;
+    }
+    const drain = path.match(/^\/v1\/workers\/([^/]+)\/drain$/);
+    if ((path === '/v1/workers' && req.method === 'GET') || (drain && req.method === 'POST')) {
+      if (!allowed(res, who, 'admin')) return true;
       if (drain) {
         const worker = workers.get(decodeURIComponent(drain[1]));
         if (!worker) send(res, 404, { error: { code: 'NOT_FOUND', message: 'worker not found' } });
@@ -359,11 +445,14 @@ export function createOrchestrator({
   return {
     backend,
     workers,
+    registry,
+    signer,
     get url() {
       return url;
     },
     async start() {
-      ({ server, url } = await listen(createApiHandler({ backend, token, extraRoutes }), { port, host }));
+      ({ server, url } = await listen(createApiHandler({ backend, authenticate, metrics: () => registry.render(), extraRoutes }), { port, host }));
+      if (!token && !clientStore) log('no FFFLEET_TOKEN and no clients file: the job API is open to anyone who can reach it');
       sweeper = setInterval(sweep, sweepMs);
       sweeper.unref?.();
       log(`fffleet-orchestrator listening on ${url}`);

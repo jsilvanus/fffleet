@@ -209,7 +209,13 @@ export class JobHandle extends EventEmitter {
 export interface FleetOptions {
   /** A worker or an orchestrator. Without it every job runs on this machine. */
   url?: string;
+  /** A static bearer token. */
   token?: string;
+  /** With `clientSecret`: log in at the orchestrator (POST /v1/auth/token) and refresh the token before it expires. */
+  clientId?: string;
+  clientSecret?: string;
+  /** Narrow the token to some of the app's scopes, e.g. 'jobs'. */
+  scope?: string;
   /** 'local' (default) runs a job here when the remote cannot be reached or answers 502/503. */
   fallback?: 'local' | 'none';
   /** Options for the local runner. */
@@ -262,6 +268,23 @@ export class JobRecord {
 
 export function byPriority(a: JobRecord, b: JobRecord): number;
 export function pruneFinished(jobs: Map<string, JobRecord>, keep: number): void;
+
+export type Scope = 'jobs' | 'metrics' | 'admin';
+export const SCOPES: readonly Scope[];
+/** Hashes a client secret for the clients file (`scrypt$...`). */
+export function hashSecret(secret: string): Promise<string>;
+export function verifySecret(secret: string, stored: string | undefined): Promise<boolean>;
+/** A random client secret. */
+export function generateSecret(): string;
+/** Gets tokens from an orchestrator and refreshes them before they expire. */
+export function createTokenProvider(opts: {
+  url: string;
+  clientId: string;
+  clientSecret: string;
+  scope?: string;
+  fetch?: typeof fetch;
+  timeoutMs?: number;
+}): { get(opts?: { refresh?: boolean }): Promise<string> };
 
 export interface S3Config {
   accessKeyId: string;

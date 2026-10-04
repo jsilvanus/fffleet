@@ -13,6 +13,9 @@ const worker = createWorker({
   token: env.FFFLEET_TOKEN || env.FFFLEET_WORKER_TOKEN || null,
   slots: env.FFFLEET_SLOTS || 'default=2',
   ffmpegPath: env.FFMPEG_PATH || 'ffmpeg',
+  // An orchestrator's /v1/auth/keys: apps and Prometheus can then use the tokens it issued on this worker too.
+  // Only when a static token is set; a worker with no token stays open, as before.
+  keysUrl: env.FFFLEET_KEYS_URL || ((env.FFFLEET_TOKEN || env.FFFLEET_WORKER_TOKEN) && env.FFFLEET_ORCHESTRATOR_URL ? `${env.FFFLEET_ORCHESTRATOR_URL.replace(/\/+$/, '')}/v1/auth/keys` : null),
   workRoot: env.FFFLEET_WORK_DIR || undefined,
   extraCapabilities: list(env.FFFLEET_CAPABILITIES),
   orchestratorUrl: env.FFFLEET_ORCHESTRATOR_URL || null,

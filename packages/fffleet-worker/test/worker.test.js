@@ -111,3 +111,68 @@ test('starts even when the orchestrator is down, and keeps trying', async () => 
     await orch.stop();
   }
 });
+
+test('metrics: slots, running ffmpeg speed and processes, and bytes staged in and uploaded out', async () => {
+  const sink = [];
+  const { server, url: sinkUrl } = await listen((req, res) => {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', () => {
+      if (req.method === 'PUT') sink.push(Buffer.concat(chunks).length);
+      res.writeHead(200);
+      res.end();
+    });
+  });
+  const w = createWorker({ id: 'wm', port: 0, host: '127.0.0.1', workRoot: join(tmp, 'wm'), slots: { default: 2 }, progressIntervalMs: 0 });
+  await w.start();
+  const scrape = async () => (await fetch(`${w.url}/metrics`)).text();
+  try {
+    const stream = w.manager.submit({
+      id: 'live', kind: 'stream', owner: 'app',
+      ffmpeg: { args: ['-re', '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=25', '-f', 'null', '-'] },
+    }).job;
+    assert.equal(stream.id, 'live');
+    await until(() => w.manager.get('live').progress?.fps != null && w.manager.get('live').progress?.speed != null, 10000);
+    let text = await scrape();
+    assert.match(text, /fffleet_slots\{pool="default"\} 2\n/);
+    assert.match(text, /fffleet_slots_used\{pool="default"\} 1\n/);
+    assert.match(text, /fffleet_job_fps\{job="live",owner="app",class="default"\} \d/);
+    assert.match(text, /fffleet_job_speed\{job="live",owner="app",class="default"\} [\d.]+/);
+    if (process.platform === 'linux') {
+      assert.match(text, /fffleet_ffmpeg_resident_memory_bytes\{job="live"\} [1-9]\d+/);
+      assert.match(text, /fffleet_ffmpeg_cpu_seconds\{job="live"\} [\d.]+/);
+    }
+    assert.match(text, /fffleet_host_cpus [1-9]/);
+    assert.match(text, /fffleet_workdir_free_bytes [1-9]/);
+    w.manager.cancel('live');
+    await until(() => w.manager.get('live').state === 'cancelled', 10000);
+
+    // A batch job that uploads its output over HTTP counts the bytes it sent.
+    const done = w.manager.submit({
+      id: 'up', kind: 'batch',
+      outputs: [{ name: 'o', uri: `${sinkUrl}/frame.png`, contentType: 'image/png' }],
+      ffmpeg: { args: ['-f', 'lavfi', '-i', 'color=c=red:s=32x32', '-frames:v', '1', '{{output:o}}'] },
+    });
+    assert.ok(done.created);
+    await until(() => w.manager.get('up').state === 'succeeded', 10000);
+    text = await scrape();
+    assert.match(text, new RegExp(`fffleet_transfer_bytes_total\\{direction="out",scheme="http"\\} ${sink[0]}\\n`));
+    assert.match(text, /fffleet_jobs_finished_total\{owner="",class="default",kind="batch",state="succeeded",code=""\} 1/);
+    assert.doesNotMatch(text, /fffleet_job_fps\{/, 'only running jobs are listed');
+  } finally {
+    await w.stop();
+    await close(server);
+  }
+});
+
+test('a worker with a token needs it for /metrics too; /v1/health stays open', async () => {
+  const w = createWorker({ id: 'wa', port: 0, host: '127.0.0.1', token: 'secret', workRoot: join(tmp, 'wa') });
+  await w.start();
+  try {
+    assert.equal((await fetch(`${w.url}/metrics`)).status, 401);
+    assert.equal((await fetch(`${w.url}/metrics`, { headers: { authorization: 'Bearer secret' } })).status, 200);
+    assert.equal((await fetch(`${w.url}/v1/health`)).status, 200);
+  } finally {
+    await w.stop();
+  }
+});
