@@ -1,6 +1,6 @@
 {
   "name": "fffleet-worker",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "fffleet worker daemon: runs ffmpeg jobs and serves the fffleet job API",
   "type": "module",
   "main": "./src/worker.js",
@@ -21,7 +21,7 @@
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
-    "fffleet": "^0.0.0"
+    "fffleet": "^0.1.0"
   },
   "keywords": [
     "ffmpeg",
