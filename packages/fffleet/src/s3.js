@@ -165,6 +165,9 @@ export function createS3Client(config) {
     return res;
   }
 
+  /** Reads and discards a response body: an unread body can trip an assertion in undici (Node 24) when the socket closes. */
+  const drain = res => res.arrayBuffer().catch(() => {});
+
   async function putFile(bucket, key, path, { contentType, signal, forceMultipart = false } = {}) {
     const size = (await stat(path)).size;
     const type = contentType ?? contentTypeFor(path);
@@ -172,7 +175,7 @@ export function createS3Client(config) {
     try {
       if (!forceMultipart && size < Math.max(partSize, MULTIPART_THRESHOLD)) {
         const body = size ? await fh.readFile() : Buffer.alloc(0);
-        await request('PUT', bucket, key, { headers: { 'content-type': type }, body, signal });
+        await drain(await request('PUT', bucket, key, { headers: { 'content-type': type }, body, signal }));
         return size;
       }
       const created = await (await request('POST', bucket, key, { query: { uploads: '' }, headers: { 'content-type': type }, signal })).text();
@@ -189,6 +192,7 @@ export function createS3Client(config) {
             signal,
           });
           parts.push(`<Part><PartNumber>${n}</PartNumber><ETag>${res.headers.get('etag')}</ETag></Part>`);
+          await drain(res);
         }
         const xml = `<CompleteMultipartUpload>${parts.join('')}</CompleteMultipartUpload>`;
         const done = await request('POST', bucket, key, { query: { uploadId }, headers: { 'content-type': 'application/xml' }, body: xml, signal });
