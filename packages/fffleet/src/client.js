@@ -4,6 +4,7 @@ import { isFinal, parseSpec } from './contract.js';
 import { detectCapabilities } from './capabilities.js';
 import { JobManager } from './job-manager.js';
 import { FleetError } from './job-record.js';
+import { createTokenProvider } from './auth.js';
 import { followJobEvents } from './sse.js';
 
 /**
@@ -58,32 +59,43 @@ export class JobHandle extends EventEmitter {
  *
  * @param {object} [opts]
  * @param {string} [opts.url]
- * @param {string} [opts.token]
+ * @param {string} [opts.token]            A static bearer token.
+ * @param {string} [opts.clientId]          With clientSecret: log in at the orchestrator (POST /v1/auth/token) instead of using a static token.
+ * @param {string} [opts.clientSecret]
+ * @param {string} [opts.scope]             Narrow the token to some of the client's scopes, e.g. 'jobs'.
  * @param {'local' | 'none'} [opts.fallback]
  * @param {ConstructorParameters<typeof JobManager>[0]} [opts.local]   Options for the local runner.
  * @param {typeof fetch} [opts.fetch]
  * @param {number} [opts.requestTimeoutMs]
  */
-export function createFleet({ url, token, fallback = 'local', local = {}, fetch: f = globalThis.fetch, requestTimeoutMs = 10000 } = {}) {
+export function createFleet({ url, token, clientId, clientSecret, scope, fallback = 'local', local = {}, fetch: f = globalThis.fetch, requestTimeoutMs = 10000 } = {}) {
   const base = url ? url.replace(/\/+$/, '') : null;
-  const headers = token ? { authorization: `Bearer ${token}` } : {};
+  const login = base && clientId && clientSecret ? createTokenProvider({ url: base, clientId, clientSecret, scope, fetch: f, timeoutMs: requestTimeoutMs }) : null;
+  const authHeaders = async (refresh = false) => {
+    if (login) return { authorization: `Bearer ${await login.get({ refresh })}` };
+    return token ? { authorization: `Bearer ${token}` } : {};
+  };
   let manager = null;
   const localManager = () => (manager ??= new JobManager(local));
   const controllers = new Set();
 
   async function request(method, path, body, extraHeaders = {}) {
-    const res = await f(`${base}${path}`, {
-      method,
-      headers: { ...headers, ...(body !== undefined && !Buffer.isBuffer(body) ? { 'content-type': 'application/json' } : {}), ...extraHeaders },
-      body: body === undefined ? undefined : Buffer.isBuffer(body) ? body : JSON.stringify(body),
-      signal: AbortSignal.timeout(requestTimeoutMs),
-    });
-    const text = await res.text();
-    const json = text ? JSON.parse(text) : null;
-    if (!res.ok) {
-      throw new FleetError(json?.error?.code ?? 'HTTP_ERROR', json?.error?.message ?? `HTTP ${res.status}`, { status: res.status, details: json?.error?.details });
+    for (let attempt = 0; ; attempt++) {
+      const res = await f(`${base}${path}`, {
+        method,
+        headers: { ...(await authHeaders(attempt > 0)), ...(body !== undefined && !Buffer.isBuffer(body) ? { 'content-type': 'application/json' } : {}), ...extraHeaders },
+        body: body === undefined ? undefined : Buffer.isBuffer(body) ? body : JSON.stringify(body),
+        signal: AbortSignal.timeout(requestTimeoutMs),
+      });
+      const text = await res.text();
+      const json = text ? JSON.parse(text) : null;
+      // An expired or revoked token: log in again once.
+      if (res.status === 401 && login && attempt === 0) continue;
+      if (!res.ok) {
+        throw new FleetError(json?.error?.code ?? 'HTTP_ERROR', json?.error?.message ?? `HTTP ${res.status}`, { status: res.status, details: json?.error?.details });
+      }
+      return json;
     }
-    return json;
   }
 
   function submitLocal(spec) {
@@ -111,7 +123,7 @@ export function createFleet({ url, token, fallback = 'local', local = {}, fetch:
     const enc = encodeURIComponent(job.id);
     handle._cancel = () => request('DELETE', `/v1/jobs/${enc}`);
     handle._write = data => request('POST', `/v1/jobs/${enc}/stdin`, data, { 'content-type': 'application/octet-stream' });
-    followJobEvents({ url: `${base}/v1/jobs/${enc}/events`, headers, signal: ac.signal, fetch: f, onEvent: e => handle._event(e) })
+    followJobEvents({ url: `${base}/v1/jobs/${enc}/events`, headers: authHeaders, signal: ac.signal, fetch: f, onEvent: e => handle._event(e) })
       .then(async () => {
         handle.snapshot = await request('GET', `/v1/jobs/${enc}`).catch(() => handle.snapshot);
         handle._resolve(handle.snapshot);

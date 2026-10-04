@@ -14,12 +14,16 @@ docker run -p 5000:5000 -e FFFLEET_TOKEN=... -e FFFLEET_WORKER_TOKEN=... ghcr.io
 | Variable | Default | |
 |---|---|---|
 | `PORT`, `HOST` | `5000`, `0.0.0.0` | |
-| `FFFLEET_TOKEN` | | Token clients send. |
+| `FFFLEET_TOKEN` | | A static token with full access. |
+| `FFFLEET_CLIENTS_FILE` | | Apps that may log in (`POST /v1/auth/token`). Add one with `fffleet-orchestrator add-client <id> --scope jobs`. |
+| `FFFLEET_SIGNING_KEY_FILE` | | Ed25519 key for tokens, created when missing. Without it tokens end at a restart. |
+| `FFFLEET_TOKEN_TTL_SECONDS` | `3600` | |
 | `FFFLEET_WORKER_TOKEN` | | Token workers register with. The orchestrator also sends it when it calls workers. |
 | `FFFLEET_HEARTBEAT_TIMEOUT_MS` | `15000` | |
 | `FFFLEET_MAX_QUEUED` | `1000` | Above this, submissions get 503. |
+| `FFFLEET_CONFIG` | | YAML or JSON file with autoscaling pools (also `--config <file>`). See the [main README](https://github.com/jsilvanus/fffleet#autoscaling). |
 
-Extra routes: `GET /v1/workers` lists the pool. `POST /v1/workers/:id/drain` stops new work going to a worker, for example before you shut it down.
+Extra routes: `GET /v1/pools` lists the autoscaling pools. `GET /v1/workers` lists the pool. `POST /v1/workers/:id/drain` stops new work going to a worker, for example before you shut it down (both need `admin`). `GET /metrics` is the fleet view for Prometheus, and `GET /v1/sd/prometheus` lists the workers as scrape targets. Logins, scopes and per-app job ownership are described in the [main README](https://github.com/jsilvanus/fffleet#logins-many-apps-one-orchestrator). With neither `FFFLEET_TOKEN` nor a clients file the API is open, and the orchestrator says so at startup.
 
 State is kept in memory: a restart forgets the queue.
 

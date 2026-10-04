@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createFleet } from 'fffleet';
+import { createFleet, hashSecret } from 'fffleet';
 import { close, listen } from 'fffleet/server';
 import { createWorker } from 'fffleet-worker';
 import { createOrchestrator } from '../src/orchestrator.js';
@@ -293,4 +293,175 @@ test('s3: jobs go only to workers with S3 credentials', async () => {
     assert.equal((await job.done).workerId, 's3w');
   }
   assert.equal(plain.controls.size, 0);
+});
+
+/** An orchestrator that lets apps log in: app-a and app-b (jobs), prom (metrics), root (admin). */
+async function loginOrchestrator(opts = {}) {
+  const secrets = { 'app-a': 'secret-a', 'app-b': 'secret-b', prom: 'secret-p', root: 'secret-r' };
+  const scopes = { 'app-a': ['jobs'], 'app-b': ['jobs'], prom: ['metrics'], root: ['admin'] };
+  const clients = await Promise.all(Object.entries(secrets).map(async ([id, s]) => ({ id, secretHash: await hashSecret(s), scopes: scopes[id] })));
+  const o = await orchestrator({ token: null, clients, ...opts });
+  const login = async (id, extra = {}) => {
+    const res = await fetch(`${o.url}/v1/auth/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'client_credentials', client_id: id, client_secret: secrets[id], ...extra }),
+    });
+    return { status: res.status, body: await res.json() };
+  };
+  const token = async id => (await login(id)).body.access_token;
+  return { o, login, token, secrets };
+}
+
+test('login: an app gets a token and uses it through the client, which refreshes it by itself', async () => {
+  const { o, secrets, token } = await loginOrchestrator();
+  const { w, controls } = await worker(o, 'w1');
+  assert.equal((await call(o, '/v1/jobs', { token: null })).status, 401);
+  assert.equal((await call(o, '/v1/jobs', { token: 'junk' })).status, 401);
+  assert.equal((await call(o, '/v1/jobs', { token: await token('app-a') })).status, 200);
+
+  const fleet = createFleet({ url: o.url, clientId: 'app-a', clientSecret: secrets['app-a'], fallback: 'none' });
+  cleanups.push(() => fleet.close());
+  const job = await fleet.submit(fakeJob('j1', { owner: 'someone-else' }));
+  await until(() => controls.has('j1'));
+  assert.equal(job.snapshot.owner, 'app-a', 'the owner is the logged-in app, whatever the spec says');
+  controls.get('j1').release();
+  assert.equal((await job.done).state, 'succeeded');
+
+  const bad = createFleet({ url: o.url, clientId: 'app-a', clientSecret: 'wrong', fallback: 'none' });
+  await assert.rejects(bad.submit(fakeJob('j2')), err => err.code === 'UNAUTHORIZED');
+  assert.ok(w);
+});
+
+test('apps see and cancel only their own jobs; admin sees all', async () => {
+  const { o, token } = await loginOrchestrator();
+  const { controls } = await worker(o, 'w1');
+  const [a, b, root] = [await token('app-a'), await token('app-b'), await token('root')];
+  assert.equal((await call(o, '/v1/jobs', { method: 'POST', token: a, body: fakeJob('ja') })).status, 201);
+  assert.equal((await call(o, '/v1/jobs', { method: 'POST', token: b, body: fakeJob('jb') })).status, 202);
+
+  assert.deepEqual((await call(o, '/v1/jobs', { token: a })).body.jobs.map(j => j.id), ['ja']);
+  assert.deepEqual((await call(o, '/v1/jobs', { token: b })).body.jobs.map(j => j.id), ['jb']);
+  assert.deepEqual((await call(o, '/v1/jobs', { token: root })).body.jobs.map(j => j.id).sort(), ['ja', 'jb']);
+
+  assert.equal((await call(o, '/v1/jobs/ja', { token: b })).status, 404, "someone else's job looks like it does not exist");
+  assert.equal((await call(o, '/v1/jobs/ja', { method: 'DELETE', token: b })).status, 404);
+  assert.equal((await fetch(`${o.url}/v1/jobs/ja/events`, { headers: { authorization: `Bearer ${b}` } })).status, 404);
+  assert.equal((await call(o, '/v1/jobs/ja', { token: a })).status, 200);
+  assert.equal((await call(o, '/v1/jobs/jb', { method: 'DELETE', token: root })).status, 202);
+  await until(() => controls.has('ja'));
+  assert.equal((await call(o, '/v1/jobs/ja', { method: 'DELETE', token: a })).status, 202);
+});
+
+test('scopes: workers and metrics are not for plain apps; metrics tokens cannot touch jobs', async () => {
+  const { o, token, login } = await loginOrchestrator();
+  await worker(o, 'w1');
+  const [a, prom, root] = [await token('app-a'), await token('prom'), await token('root')];
+  assert.equal((await call(o, '/v1/workers', { token: a })).status, 403);
+  assert.equal((await call(o, '/v1/workers/w1/drain', { method: 'POST', token: a })).status, 403);
+  assert.equal((await call(o, '/v1/workers', { token: root })).status, 200);
+  assert.equal((await call(o, '/v1/jobs', { token: prom })).status, 403);
+  assert.equal((await fetch(`${o.url}/metrics`, { headers: { authorization: `Bearer ${a}` } })).status, 403);
+  assert.equal((await fetch(`${o.url}/metrics`)).status, 401);
+  assert.equal((await fetch(`${o.url}/metrics`, { headers: { authorization: `Bearer ${prom}` } })).status, 200);
+
+  const narrowed = await login('root', { scope: 'metrics' });
+  assert.equal(narrowed.body.scope, 'metrics');
+  assert.equal((await call(o, '/v1/workers', { token: narrowed.body.access_token })).status, 403);
+  assert.equal((await login('app-a', { scope: 'admin' })).body.error, 'invalid_scope');
+});
+
+test('login failures are refused and counted; the static token still works beside logins', async () => {
+  const { o, secrets } = await loginOrchestrator({ token: 'static' });
+  const bad = await fetch(`${o.url}/v1/auth/token`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ grant_type: 'client_credentials', client_id: 'app-a', client_secret: 'nope' }) });
+  assert.equal(bad.status, 401);
+  const ok = await fetch(`${o.url}/v1/auth/token`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ grant_type: 'client_credentials', client_id: 'app-a', client_secret: secrets['app-a'] }) });
+  assert.equal(ok.status, 200);
+  assert.equal((await call(o, '/v1/workers', { token: 'static' })).status, 200);
+  const text = await o.registry.render();
+  assert.match(text, /fffleet_auth_login_failures_total\{error="invalid_client"\} 1/);
+  assert.match(text, /fffleet_auth_tokens_issued_total\{client="app-a"\} 1/);
+});
+
+test('removing an app from the clients file ends its tokens', async () => {
+  const dir = join(tmp, 'clients');
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  await mkdir(dir, { recursive: true });
+  const file = join(dir, 'clients.json');
+  const entry = async (id, s) => ({ id, secretHash: await hashSecret(s), scopes: ['jobs'] });
+  await writeFile(file, JSON.stringify({ clients: [await entry('app-a', 's1'), await entry('app-b', 's2')] }));
+  const o = await orchestrator({ token: null, clients: file });
+  const login = async (id, s) => (await fetch(`${o.url}/v1/auth/token`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ grant_type: 'client_credentials', client_id: id, client_secret: s }) })).json();
+  const { access_token } = await login('app-a', 's1');
+  assert.equal((await call(o, '/v1/jobs', { token: access_token })).status, 200);
+  await writeFile(file, JSON.stringify({ clients: [await entry('app-b', 's2')] }));
+  await sleep(1100); // the file is re-read at most once a second
+  assert.equal((await call(o, '/v1/jobs', { token: access_token })).status, 401);
+  assert.equal((await login('app-a', 's1')).error, 'invalid_client');
+});
+
+test('tokens survive an orchestrator restart when the signing key is kept in a file', async () => {
+  const keyFile = join(tmp, 'signing.pem');
+  const clients = [{ id: 'app-a', secretHash: await hashSecret('s'), scopes: ['jobs'] }];
+  const first = createOrchestrator({ port: 0, host: '127.0.0.1', clients, signingKeyFile: keyFile, workerToken: WORKER_TOKEN });
+  await first.start();
+  const res = await fetch(`${first.url}/v1/auth/token`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ grant_type: 'client_credentials', client_id: 'app-a', client_secret: 's' }) });
+  const { access_token } = await res.json();
+  await first.stop();
+  const second = await orchestrator({ token: null, clients, signingKeyFile: keyFile });
+  assert.equal((await call(second, '/v1/jobs', { token: access_token })).status, 200);
+});
+
+test('a worker accepts tokens the orchestrator issued, with their scopes', async () => {
+  const { o, token } = await loginOrchestrator();
+  const { w } = await worker(o, 'w1', { keysUrl: `${o.url}/v1/auth/keys` });
+  const [a, prom] = [await token('app-a'), await token('prom')];
+  const get = (path, t) => fetch(`${w.url}${path}`, { headers: { authorization: `Bearer ${t}` } });
+  assert.equal((await get('/v1/capabilities', a)).status, 200);
+  assert.equal((await get('/v1/capabilities', WORKER_TOKEN)).status, 200, 'the orchestrator itself uses the static token');
+  assert.equal((await get('/v1/capabilities', 'junk')).status, 401);
+  assert.equal((await get('/metrics', a)).status, 403);
+  assert.equal((await get('/metrics', prom)).status, 200);
+  assert.equal((await get('/v1/capabilities', prom)).status, 403);
+});
+
+test('metrics: the fleet view of queue, jobs, workers and failed dispatches', async () => {
+  const { o, token } = await loginOrchestrator();
+  const { controls } = await worker(o, 'w1');
+  const a = await token('app-a');
+  await call(o, '/v1/jobs', { method: 'POST', token: a, body: fakeJob('m1', { class: 'default' }) });
+  await call(o, '/v1/jobs', { method: 'POST', token: a, body: fakeJob('m2') });
+  await until(() => controls.has('m1'));
+  const res = await fetch(`${o.url}/metrics`, { headers: { authorization: `Bearer ${await token('prom')}` } });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /^text\/plain; version=0\.0\.4/);
+  const text = await res.text();
+  assert.match(text, /fffleet_workers 1\n/);
+  assert.match(text, /fffleet_worker_slots\{worker="w1",pool="default"\} 1\n/);
+  assert.match(text, /fffleet_worker_slots_used\{worker="w1",pool="default"\} 1\n/);
+  assert.match(text, /fffleet_worker_heartbeat_age_seconds\{worker="w1"\} \d/);
+  assert.match(text, /fffleet_queue_length\{class="default"\} 1\n/);
+  assert.match(text, /fffleet_jobs\{owner="app-a",class="default",state="running"\} 1\n/);
+  assert.match(text, /fffleet_jobs\{owner="app-a",class="default",state="queued"\} 1\n/);
+  assert.match(text, /fffleet_jobs_submitted_total\{owner="app-a",class="default",kind="batch"\} 2\n/);
+  assert.match(text, /fffleet_build_info\{role="orchestrator",version="[^"]+"\} 1\n/);
+  assert.match(text, /process_resident_memory_bytes \d/);
+});
+
+test('service discovery lists each worker as a Prometheus target with its metrics path', async () => {
+  const { o, token } = await loginOrchestrator();
+  const { w } = await worker(o, 'w1');
+  const prom = await token('prom');
+  assert.equal((await call(o, '/v1/sd/prometheus', { token: await token('app-a') })).status, 403);
+  const { status, body } = await call(o, '/v1/sd/prometheus', { token: prom });
+  assert.equal(status, 200);
+  assert.deepEqual(body, [{ targets: [new URL(w.url).host], labels: { __scheme__: 'http', __metrics_path__: '/metrics', fffleet_worker: 'w1' } }]);
+});
+
+test('a job that fails to dispatch shows up in fffleet_dispatch_failures_total', async () => {
+  const { o } = await loginOrchestrator();
+  const { w } = await worker(o, 'w1');
+  await w.stop();
+  o.backend.submit(fakeJob('d1'));
+  await until(async () => /fffleet_dispatch_failures_total\{worker="w1",reason="unreachable"\} 1/.test(await o.registry.render()));
 });

@@ -155,8 +155,10 @@ export interface ExecutorResult {
 export type Executor = (spec: JobSpec & { id: string }, runtime: ExecutorRuntime) => Promise<ExecutorResult>;
 
 export interface JobManagerOptions {
-  /** Slots per class pool, e.g. { default: 2, stream: 1 } or 'default=2,stream=1'. */
+  /** Slots per class pool, e.g. { default: 2, stream: 1 }, 'default=2,stream=1', or 'auto' / 'auto:N' (sized from the CPU count; N cores per slot). */
   slots?: Record<string, number> | string;
+  /** Job kinds this runner accepts ('batch', 'stream'; a comma list or an array). Default: both. A job of another kind is refused with 422 UNSUPPORTED_KIND. */
+  kinds?: JobKind[] | string;
   workRoot?: string;
   ffmpegPath?: string;
   maxQueued?: number;
@@ -177,6 +179,7 @@ export interface PoolStats {
 export class JobManager {
   constructor(opts?: JobManagerOptions);
   readonly slots: Record<string, number>;
+  readonly kinds: JobKind[];
   submit(spec: JobSpecInput): { created: boolean; queued?: boolean; job: JobSnapshot };
   get(id: string): JobSnapshot | null;
   list(): JobSnapshot[];
@@ -188,7 +191,11 @@ export class JobManager {
   close(): Promise<void>;
 }
 
-export function normalizeSlots(slots: Record<string, number | string> | string): Record<string, number>;
+export function normalizeSlots(slots: Record<string, number | string> | string, opts?: { kinds?: JobKind[]; cpus?: number }): Record<string, number>;
+/** Parses 'batch,stream' or an array; no value means both kinds. */
+export function normalizeKinds(kinds?: JobKind[] | string): JobKind[];
+/** Slot pools sized from the CPU count: batch only cores/2, stream only cores, both: default cores/2 plus stream cores/4. */
+export function autoSlots(opts?: { cpus?: number; kinds?: JobKind[]; coresPerSlot?: number }): Record<string, number>;
 export function runFfmpegJob(spec: JobSpec & { id: string }, runtime: ExecutorRuntime): Promise<Required<ExecutorResult>>;
 
 export class JobHandle extends EventEmitter {
@@ -209,7 +216,13 @@ export class JobHandle extends EventEmitter {
 export interface FleetOptions {
   /** A worker or an orchestrator. Without it every job runs on this machine. */
   url?: string;
+  /** A static bearer token. */
   token?: string;
+  /** With `clientSecret`: log in at the orchestrator (POST /v1/auth/token) and refresh the token before it expires. */
+  clientId?: string;
+  clientSecret?: string;
+  /** Narrow the token to some of the app's scopes, e.g. 'jobs'. */
+  scope?: string;
   /** 'local' (default) runs a job here when the remote cannot be reached or answers 502/503. */
   fallback?: 'local' | 'none';
   /** Options for the local runner. */
@@ -262,6 +275,23 @@ export class JobRecord {
 
 export function byPriority(a: JobRecord, b: JobRecord): number;
 export function pruneFinished(jobs: Map<string, JobRecord>, keep: number): void;
+
+export type Scope = 'jobs' | 'metrics' | 'admin';
+export const SCOPES: readonly Scope[];
+/** Hashes a client secret for the clients file (`scrypt$...`). */
+export function hashSecret(secret: string): Promise<string>;
+export function verifySecret(secret: string, stored: string | undefined): Promise<boolean>;
+/** A random client secret. */
+export function generateSecret(): string;
+/** Gets tokens from an orchestrator and refreshes them before they expire. */
+export function createTokenProvider(opts: {
+  url: string;
+  clientId: string;
+  clientSecret: string;
+  scope?: string;
+  fetch?: typeof fetch;
+  timeoutMs?: number;
+}): { get(opts?: { refresh?: boolean }): Promise<string> };
 
 export interface S3Config {
   accessKeyId: string;

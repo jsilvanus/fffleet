@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs';
+import { createAutoscaler } from './autoscaler.js';
+import { createProviders } from './providers/index.js';
 import { randomUUID } from 'node:crypto';
-import { FleetError, JobRecord, byPriority, canonicalJson, followJobEvents, implicitRequirements, normalizeSlots, parseSpec, pruneFinished, satisfies } from 'fffleet';
-import { checkBearer, close, createApiHandler, listen, readJson, send, sendError } from 'fffleet/server';
+import { FleetError, JobRecord, byPriority, canonicalJson, followJobEvents, implicitRequirements, normalizeKinds, normalizeSlots, parseSpec, pruneFinished, satisfies } from 'fffleet';
+import {
+  Registry, allowed, checkBearer, close, createApiHandler, createAuthenticator, createClientStore, createTokenSigner, createTokenVerifier,
+  bearerOf, issueToken, jobMetrics, listen, loadSigningKey, processMetrics, readBody, readJson, send, sendError,
+} from 'fffleet/server';
 
 const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 const REDISPATCH_DELAY_MS = 500;
@@ -16,7 +21,14 @@ const REDISPATCH_DELAY_MS = 500;
  * @param {object} [opts]
  * @param {number} [opts.port]
  * @param {string} [opts.host]
- * @param {string | null} [opts.token]          Bearer token for clients.
+ * @param {string | null} [opts.token]          Static bearer token with full (admin) access.
+ * @param {string | object[] | null} [opts.clients]  Apps that may log in: a clients file path, or a list of { id, secretHash, scopes }.
+ * @param {import('node:crypto').KeyObject | string | null} [opts.signingKey]  Ed25519 key for tokens (KeyObject or PEM).
+ * @param {string | null} [opts.signingKeyFile] Where the signing key is kept; created when missing. Without it tokens die with the process.
+ * @param {number} [opts.tokenTtlSeconds]
+ * @param {{ publicUrl: string | null, autoscale: object, pools: object[] } | null} [opts.scaling]  Where to start more workers (see loadConfig). Without it the pool is whatever registers.
+ * @param {Record<string, object>} [opts.providers]   Provider instances by pool name, replacing the built-in ones (tests).
+ * @param {Buffer | string | null} [opts.joinKey]    Key the workers' join secrets derive from. Default: the signing key's file contents, else random.
  * @param {string | null} [opts.workerToken]    Bearer token workers register with; also sent to workers.
  * @param {number} [opts.heartbeatTimeoutMs]    A worker silent this long is dropped and its jobs fail.
  * @param {number} [opts.sweepMs]
@@ -30,6 +42,13 @@ export function createOrchestrator({
   port = 5000,
   host = '0.0.0.0',
   token = null,
+  clients = null,
+  signingKey = null,
+  signingKeyFile = null,
+  tokenTtlSeconds = 3600,
+  scaling = null,
+  providers: providerOverrides = {},
+  joinKey = null,
   workerToken = null,
   heartbeatTimeoutMs = 15000,
   sweepMs = 1000,
@@ -50,13 +69,73 @@ export function createOrchestrator({
   let sweeper = null;
   let pumpTimer = null;
 
+  // The key the workers' join secrets derive from: stable across restarts only when the signing key is a file.
+  const signingKeyBytes = () => {
+    try {
+      return signingKeyFile ? readFileSync(signingKeyFile) : null;
+    } catch {
+      return null;
+    }
+  };
+  const clientStore = createClientStore(clients);
+  const signer = createTokenSigner({ privateKey: signingKey ?? loadSigningKey(signingKeyFile), ttlSeconds: tokenTtlSeconds });
+  const authenticate = createAuthenticator({
+    token,
+    verify: clientStore ? createTokenVerifier({ getKey: kid => (kid === signer.kid ? signer.publicKey : null) }) : null,
+    isActive: sub => clientStore?.has(sub) ?? false,
+  });
+
+  let autoscaler = null;
+  const registry = new Registry();
+  processMetrics(registry);
+  const jobStats = jobMetrics(registry, () => jobs.values());
+  const m = {
+    info: registry.gauge('fffleet_build_info', 'Version of this fffleet process.', ['role', 'version']),
+    workerSlots: registry.gauge('fffleet_worker_slots', 'Slots per worker and pool.', ['worker', 'pool']),
+    workerUsed: registry.gauge('fffleet_worker_slots_used', 'Slots in use per worker and pool.', ['worker', 'pool']),
+    workerAge: registry.gauge('fffleet_worker_heartbeat_age_seconds', 'Seconds since the worker last registered or sent a heartbeat.', ['worker']),
+    workerDraining: registry.gauge('fffleet_worker_draining', '1 while the worker is drained.', ['worker']),
+    workerCooldown: registry.gauge('fffleet_worker_cooldown', '1 while the worker gets no new jobs after a failed dispatch.', ['worker']),
+    workers: registry.gauge('fffleet_workers', 'Registered workers.'),
+    queued: registry.gauge('fffleet_queue_length', 'Jobs waiting for a worker, by class.', ['class']),
+    dispatchFailures: registry.counter('fffleet_dispatch_failures_total', 'Dispatches a worker did not accept.', ['worker', 'reason']),
+    workersLost: registry.counter('fffleet_workers_lost_total', 'Workers dropped after missing their heartbeats.'),
+    tokensIssued: registry.counter('fffleet_auth_tokens_issued_total', 'Tokens issued, by client.', ['client']),
+    loginFailures: registry.counter('fffleet_auth_login_failures_total', 'Token requests refused, by OAuth2 error.', ['error']),
+  };
+  m.info.set({ role: 'orchestrator', version: VERSION }, 1);
+  const scaleMetrics = {
+    instances: registry.gauge('fffleet_autoscaler_instances', 'Workers the autoscaler manages, by pool and state.', ['pool', 'state']),
+    creates: registry.counter('fffleet_autoscaler_creates_total', 'Workers the autoscaler tried to start.', ['pool', 'result']),
+    destroys: registry.counter('fffleet_autoscaler_destroys_total', 'Workers the autoscaler removed, by reason.', ['pool', 'reason']),
+  };
+  registry.collect(() => {
+    for (const g of [m.workerSlots, m.workerUsed, m.workerAge, m.workerDraining, m.workerCooldown, m.queued]) g.reset();
+    const now = Date.now();
+    for (const w of workers.values()) {
+      for (const [pool, total] of Object.entries(w.slots)) {
+        m.workerSlots.set({ worker: w.id, pool }, total);
+        m.workerUsed.set({ worker: w.id, pool }, w.used[pool] ?? 0);
+      }
+      m.workerAge.set({ worker: w.id }, (now - w.lastSeen) / 1000);
+      m.workerDraining.set({ worker: w.id }, w.draining ? 1 : 0);
+      m.workerCooldown.set({ worker: w.id }, w.cooldownUntil > now ? 1 : 0);
+    }
+    m.workers.set({}, workers.size);
+    for (const job of queue) m.queued.inc({ class: job.spec.class });
+  });
+
   /**
-   * @typedef {{ id: string, url: string, slots: Record<string, number>, used: Record<string, number>,
+   * @typedef {{ id: string, url: string, slots: Record<string, number>, used: Record<string, number>, kinds: string[], token: string | null,
    *   capabilities: Set<string>, version: string | null, lastSeen: number, draining: boolean, cooldownUntil: number, jobs: Set<string> }} Worker
    * @typedef {JobRecord & { worker?: Worker | null, pool?: string, follow?: AbortController, assignedAt?: number, released?: boolean }} Job
    */
 
-  const workerHeaders = (extra = {}) => ({ ...extra, ...(workerToken ? { authorization: `Bearer ${workerToken}` } : {}) });
+  // A worker is called with the token it registered with: the shared worker token, or its own join secret.
+  const workerHeaders = (worker, extra = {}) => {
+    const t = worker?.token ?? workerToken;
+    return { ...extra, ...(t ? { authorization: `Bearer ${t}` } : {}) };
+  };
 
   function poolFor(worker, cls) {
     return worker.slots[cls] !== undefined ? cls : 'default';
@@ -64,6 +143,7 @@ export function createOrchestrator({
 
   function fits(worker, job) {
     if (worker.draining || worker.cooldownUntil > Date.now()) return false;
+    if (!worker.kinds.includes(job.spec.kind)) return false;
     const pool = poolFor(worker, job.spec.class);
     const total = worker.slots[pool] ?? 0;
     return total > 0 && (worker.used[pool] ?? 0) < total
@@ -112,22 +192,25 @@ export function createOrchestrator({
     try {
       res = await fetch(`${worker.url}/v1/jobs`, {
         method: 'POST',
-        headers: workerHeaders({ 'content-type': 'application/json' }),
+        headers: workerHeaders(worker, { 'content-type': 'application/json' }),
         body: JSON.stringify(job.spec),
         signal: AbortSignal.timeout(10000),
       });
     } catch (err) {
       log(`dispatch of ${job.id} to ${worker.id} failed: ${err.message}; dropping the worker until it re-registers`);
+      m.dispatchFailures.inc({ worker: worker.id, reason: 'unreachable' });
       return redispatch(job, worker);
     }
     if (job.final) return release(job); // cancelled while dispatching; the cancel already reached the worker or will be ignored
     if (res.status >= 500) {
       log(`worker ${worker.id} answered ${res.status} for ${job.id}; trying elsewhere`);
       worker.cooldownUntil = Date.now() + dispatchCooldownMs;
+      m.dispatchFailures.inc({ worker: worker.id, reason: 'server_error' });
       return redispatch(job, worker, false);
     }
     if (!res.ok) {
       const body = await res.json().catch(() => null);
+      m.dispatchFailures.inc({ worker: worker.id, reason: 'rejected' });
       job.push({ state: 'failed', error: { code: 'DISPATCH_REJECTED', message: `worker ${worker.id} rejected the job: ${body?.error?.message ?? `HTTP ${res.status}`}` } });
       return release(job);
     }
@@ -149,7 +232,7 @@ export function createOrchestrator({
     job.follow = ac;
     followJobEvents({
       url: `${worker.url}/v1/jobs/${encodeURIComponent(job.id)}/events`,
-      headers: workerHeaders(),
+      headers: () => workerHeaders(worker),
       signal: ac.signal,
       maxRetries: 3,
       onEvent: e => {
@@ -194,7 +277,7 @@ export function createOrchestrator({
     log(`worker ${worker.id} removed${reason ? `: ${reason.message}` : ''}`);
   }
 
-  function register(body) {
+  function register(body, bearer = null) {
     if (!body || typeof body.id !== 'string' || !body.id || typeof body.url !== 'string') {
       throw new FleetError('INVALID_WORKER', 'register needs id and url', { status: 400 });
     }
@@ -204,15 +287,23 @@ export function createOrchestrator({
     } catch (err) {
       throw new FleetError('INVALID_WORKER', err.message, { status: 400 });
     }
+    let kinds;
+    try {
+      kinds = normalizeKinds(body.kinds);
+    } catch (err) {
+      throw new FleetError('INVALID_WORKER', err.message, { status: 400 });
+    }
     const now = Date.now();
     let worker = workers.get(body.id);
     if (!worker) {
-      worker = { id: body.id, url: '', slots, used: {}, capabilities: new Set(), version: null, lastSeen: now, draining: false, cooldownUntil: 0, jobs: new Set() };
+      worker = { id: body.id, url: '', slots, used: {}, kinds, token: null, capabilities: new Set(), version: null, lastSeen: now, draining: false, cooldownUntil: 0, jobs: new Set() };
       workers.set(body.id, worker);
       log(`worker ${body.id} joined at ${body.url} with slots ${JSON.stringify(slots)}`);
     }
     worker.url = body.url.replace(/\/+$/, '');
     worker.slots = slots;
+    worker.kinds = kinds;
+    worker.token = bearer;
     worker.capabilities = new Set(Array.isArray(body.capabilities) ? body.capabilities : []);
     worker.version = body.version ?? null;
     worker.lastSeen = now;
@@ -235,6 +326,7 @@ export function createOrchestrator({
     const now = Date.now();
     for (const worker of [...workers.values()]) {
       if (now - worker.lastSeen > heartbeatTimeoutMs) {
+        m.workersLost.inc();
         removeWorker(worker, { code: 'WORKER_LOST', message: `worker ${worker.id} missed its heartbeats` });
       }
     }
@@ -256,6 +348,7 @@ export function createOrchestrator({
       pruneFinished(jobs, keepFinished);
       const job = /** @type {Job} */ (new JobRecord(spec));
       jobs.set(spec.id, job);
+      jobStats.track(job);
       enqueue(job);
       pump();
       return { created: true, queued: queue.includes(job), job: job.snapshot() };
@@ -279,7 +372,7 @@ export function createOrchestrator({
       }
       const worker = job.worker;
       try {
-        const res = await fetch(`${worker.url}/v1/jobs/${encodeURIComponent(id)}`, { method: 'DELETE', headers: workerHeaders(), signal: AbortSignal.timeout(5000) });
+        const res = await fetch(`${worker.url}/v1/jobs/${encodeURIComponent(id)}`, { method: 'DELETE', headers: workerHeaders(worker), signal: AbortSignal.timeout(5000) });
         if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
         if (res.status === 404) throw new Error('worker does not know the job');
       } catch (err) {
@@ -295,7 +388,7 @@ export function createOrchestrator({
       if (job.final || !job.worker || job.state === 'queued') throw new FleetError('NOT_RUNNING', 'job is not running', { status: 409 });
       const res = await fetch(`${job.worker.url}/v1/jobs/${encodeURIComponent(id)}/stdin`, {
         method: 'POST',
-        headers: workerHeaders({ 'content-type': 'application/octet-stream' }),
+        headers: workerHeaders(job.worker, { 'content-type': 'application/octet-stream' }),
         body: data,
         signal: AbortSignal.timeout(5000),
       });
@@ -318,25 +411,61 @@ export function createOrchestrator({
     },
   };
 
-  async function extraRoutes(req, res, reqUrl) {
-    if (reqUrl.pathname === '/v1/workers/register' && req.method === 'POST') {
-      if (!checkBearer(req, workerToken)) {
-        send(res, 401, { error: { code: 'UNAUTHORIZED', message: 'missing or wrong worker token' } });
-        return true;
-      }
+  async function extraRoutes(req, res, reqUrl, who) {
+    const path = reqUrl.pathname;
+    if (path === '/v1/auth/token' && req.method === 'POST') {
+      const raw = (await readBody(req, 64 * 1024)).toString('utf8');
+      const json = (req.headers['content-type'] ?? '').includes('application/json');
+      let body;
       try {
-        send(res, 200, register(await readJson(req)));
+        body = json ? JSON.parse(raw || '{}') : new URLSearchParams(raw);
+      } catch {
+        body = {};
+      }
+      const out = await issueToken({ req, body, clients: clientStore, signer });
+      if (out.status === 200) m.tokensIssued.inc({ client: out.body.access_token && JSON.parse(Buffer.from(out.body.access_token.split('.')[1], 'base64url')).sub });
+      else m.loginFailures.inc({ error: out.body.error });
+      send(res, out.status, out.body, out.headers);
+      return true;
+    }
+    if (path === '/v1/auth/keys' && req.method === 'GET') {
+      // Public keys are public: workers fetch them to check tokens without holding a secret.
+      send(res, 200, signer.jwks(), { 'cache-control': 'max-age=300' });
+      return true;
+    }
+    if (path === '/v1/workers/register' && req.method === 'POST') {
+      try {
+        const body = await readJson(req);
+        const given = bearerOf(req);
+        // The shared worker token, or the join secret of a worker this orchestrator started itself.
+        const ok = checkBearer(req, workerToken) || (given && body && autoscaler?.acceptsJoin(body.id, given));
+        if (!ok) {
+          send(res, 401, { error: { code: 'UNAUTHORIZED', message: 'missing or wrong worker token' } });
+          return true;
+        }
+        send(res, 200, register(body, given));
       } catch (err) {
         sendError(res, err);
       }
       return true;
     }
-    const drain = reqUrl.pathname.match(/^\/v1\/workers\/([^/]+)\/drain$/);
-    if ((reqUrl.pathname === '/v1/workers' && req.method === 'GET') || (drain && req.method === 'POST')) {
-      if (!checkBearer(req, token)) {
-        send(res, 401, { error: { code: 'UNAUTHORIZED', message: 'missing or wrong bearer token' } });
-        return true;
+    if (path === '/v1/sd/prometheus' && req.method === 'GET') {
+      // Prometheus HTTP service discovery: one target per worker, scraped at its /metrics.
+      if (allowed(res, who, 'metrics')) {
+        send(res, 200, [...workers.values()].map(w => {
+          const u = new URL(w.url);
+          return { targets: [u.host], labels: { __scheme__: u.protocol.slice(0, -1), __metrics_path__: `${u.pathname.replace(/\/+$/, '')}/metrics`, fffleet_worker: w.id } };
+        }));
       }
+      return true;
+    }
+    if (path === '/v1/pools' && req.method === 'GET') {
+      if (allowed(res, who, 'admin')) send(res, 200, autoscaler ? autoscaler.describe() : { pools: [] });
+      return true;
+    }
+    const drain = path.match(/^\/v1\/workers\/([^/]+)\/drain$/);
+    if ((path === '/v1/workers' && req.method === 'GET') || (drain && req.method === 'POST')) {
+      if (!allowed(res, who, 'admin')) return true;
       if (drain) {
         const worker = workers.get(decodeURIComponent(drain[1]));
         if (!worker) send(res, 404, { error: { code: 'NOT_FOUND', message: 'worker not found' } });
@@ -353,23 +482,55 @@ export function createOrchestrator({
   }
 
   function describe(w) {
-    return { id: w.id, url: w.url, slots: w.slots, used: w.used, draining: w.draining, version: w.version, lastSeen: new Date(w.lastSeen).toISOString(), jobs: [...w.jobs], capabilityCount: w.capabilities.size };
+    return { id: w.id, url: w.url, slots: w.slots, kinds: w.kinds, used: w.used, draining: w.draining, version: w.version, lastSeen: new Date(w.lastSeen).toISOString(), jobs: [...w.jobs], capabilityCount: w.capabilities.size };
   }
 
   return {
     backend,
     workers,
+    registry,
+    signer,
+    get autoscaler() {
+      return autoscaler;
+    },
     get url() {
       return url;
     },
     async start() {
-      ({ server, url } = await listen(createApiHandler({ backend, token, extraRoutes }), { port, host }));
+      ({ server, url } = await listen(createApiHandler({ backend, authenticate, metrics: () => registry.render(), extraRoutes }), { port, host }));
+      if (!token && !clientStore) log('no FFFLEET_TOKEN and no clients file: the job API is open to anyone who can reach it');
       sweeper = setInterval(sweep, sweepMs);
       sweeper.unref?.();
       log(`fffleet-orchestrator listening on ${url}`);
+      if (scaling) {
+        const view = {
+          queue: () => queue.map(j => ({ id: j.id, spec: j.spec, waitedMs: Date.now() - Date.parse(j.createdAt) })),
+          workers: () => workers.values(),
+          drain: id => {
+            const w = workers.get(id);
+            if (w) w.draining = true;
+          },
+          forget: id => {
+            const w = workers.get(id);
+            if (w) removeWorker(w, { code: 'WORKER_REMOVED', message: `worker ${id} was removed by the autoscaler` });
+          },
+          publicUrl: () => scaling.publicUrl ?? url,
+        };
+        const providers = createProviders(scaling, { onExit: id => autoscaler?.exited(id), log, overrides: providerOverrides });
+        autoscaler = createAutoscaler({
+          config: scaling,
+          providers,
+          view,
+          joinKey: joinKey ?? scaling.autoscale.joinSecret ?? signingKeyBytes() ?? undefined,
+          log: msg => log(msg),
+          metrics: scaleMetrics,
+        });
+        await autoscaler.start();
+      }
       return this;
     },
     async stop() {
+      await autoscaler?.stop();
       clearInterval(sweeper);
       clearTimeout(pumpTimer);
       for (const job of jobs.values()) job.follow?.abort();

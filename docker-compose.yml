@@ -8,6 +8,10 @@ services:
     environment:
       FFFLEET_TOKEN: ${FFFLEET_TOKEN:?set FFFLEET_TOKEN}
       FFFLEET_WORKER_TOKEN: ${FFFLEET_WORKER_TOKEN:?set FFFLEET_WORKER_TOKEN}
+      # Per-app logins instead of (or beside) the shared FFFLEET_TOKEN; see the README, "Logins".
+      # FFFLEET_CLIENTS_FILE: /data/clients.json
+      # FFFLEET_SIGNING_KEY_FILE: /data/signing.pem
+    # volumes: ["./orchestrator-data:/data"]
     ports: ["5000:5000"]
 
   worker-1: &worker
