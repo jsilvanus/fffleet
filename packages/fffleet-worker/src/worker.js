@@ -18,7 +18,8 @@ const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.u
  * @param {string} [opts.host]
  * @param {string | null} [opts.token]              Static token that is granted full access (the orchestrator sends it).
  * @param {string | null} [opts.keysUrl]            An orchestrator's /v1/auth/keys: tokens it issued are accepted too, with their scopes.
- * @param {Record<string, number> | string} [opts.slots]
+ * @param {Record<string, number> | string} [opts.slots]   Pools, or 'auto' / 'auto:<cores per job>' to size them from the CPU count.
+ * @param {('batch' | 'stream')[] | string} [opts.kinds]   Job kinds this worker takes; both by default. A batch-only and a stream-only worker keep long streams from starving encodes.
  * @param {string} [opts.ffmpegPath]
  * @param {string} [opts.workRoot]
  * @param {string[]} [opts.extraCapabilities]       Added to the detected ones, e.g. 'mount:/data/media'.
@@ -38,6 +39,7 @@ export function createWorker({
   token = null,
   keysUrl = null,
   slots = { default: 2 },
+  kinds = undefined,
   ffmpegPath = 'ffmpeg',
   workRoot,
   extraCapabilities = [],
@@ -50,7 +52,7 @@ export function createWorker({
   s3 = null,
   log = () => {},
 } = {}) {
-  const manager = new JobManager({ slots, ffmpegPath, workRoot, workerId: id, progressIntervalMs, executors, s3 });
+  const manager = new JobManager({ slots, kinds, ffmpegPath, workRoot, workerId: id, progressIntervalMs, executors, s3 });
   let capabilities = [];
   let server = null;
   let url = null;
@@ -107,14 +109,14 @@ export function createWorker({
     cancel: jobId => manager.cancel(jobId),
     writeStdin: (jobId, data) => manager.writeStdin(jobId, data),
     subscribe: (jobId, after, fn) => manager.subscribe(jobId, after, fn),
-    capabilities: () => ({ id, version: VERSION, slots: manager.stats().pools, queued: manager.stats().queued, capabilities }),
+    capabilities: () => ({ id, version: VERSION, kinds: manager.kinds, slots: manager.stats().pools, queued: manager.stats().queued, capabilities }),
   };
 
   async function register() {
     const res = await fetch(`${orchestratorUrl.replace(/\/+$/, '')}/v1/workers/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(orchestratorToken ? { authorization: `Bearer ${orchestratorToken}` } : {}) },
-      body: JSON.stringify({ id, url: advertiseUrl ?? url, slots: manager.slots, capabilities, version: VERSION, active: manager.activeIds() }),
+      body: JSON.stringify({ id, url: advertiseUrl ?? url, slots: manager.slots, kinds: manager.kinds, capabilities, version: VERSION, active: manager.activeIds() }),
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) throw new Error(`register returned HTTP ${res.status}`);
@@ -146,7 +148,7 @@ export function createWorker({
       const schemes = manager.s3 ? ['scheme:s3'] : [];
       capabilities = [...new Set([...(await detectCapabilities(ffmpegPath)), ...types, ...schemes, ...extraCapabilities])].sort();
       ({ server, url } = await listen(createApiHandler({ backend, authenticate, metrics: () => registry.render() }), { port, host }));
-      log(`fffleet-worker ${id} listening on ${url} with slots ${JSON.stringify(manager.slots)}`);
+      log(`fffleet-worker ${id} listening on ${url} with slots ${JSON.stringify(manager.slots)} for ${manager.kinds.join(' and ')} jobs`);
       if (orchestratorUrl) {
         await register().catch(err => log(`first registration failed, retrying: ${err.message}`));
         heartbeat = setInterval(beat, heartbeatMs);

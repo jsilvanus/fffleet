@@ -1,0 +1,47 @@
+# Example orchestrator config. Start with:  FFFLEET_CONFIG=fffleet.example.yaml fffleet-orchestrator
+# (or: fffleet-orchestrator --config fffleet.example.yaml). ${NAME} is replaced by an environment variable,
+# ${NAME:-fallback} falls back to a default.
+
+# The address new workers use to reach this orchestrator. Needed for docker and hetzner pools.
+publicUrl: https://orchestrator.example.com
+
+autoscale:
+  scaleUpAfter: 10s      # a queued job must wait this long before a new worker is started for it
+  idleAfter: 5m          # an idle worker is removed after this (down to the pool's min)
+  bootTimeout: 5m        # a worker that has not registered by then is removed and the pool backs off
+  maxWorkers: 10         # cap over all pools (default: no cap)
+
+pools:
+  # Free capacity first: worker processes on the orchestrator's own machine.
+  - name: local
+    provider: process
+    max: 2
+    kinds: [batch]
+    slots: auto          # batch: cores / 2 slots; "auto:4" = 4 cores per slot
+
+  # A pool of containers on a Docker network the orchestrator shares.
+  - name: containers
+    provider: docker
+    max: 4
+    kinds: [stream]      # relays and live encodes; stream only: cores slots
+    slots: auto
+    docker:
+      network: fffleet
+      image: ghcr.io/jsilvanus/fffleet-worker:latest
+      cpus: 4
+
+  # Paid capacity last: Hetzner Cloud servers, created on demand.
+  - name: cloud
+    provider: hetzner
+    min: 0
+    max: 5
+    slots: auto          # both kinds: default = cores / 2 plus stream = cores / 4
+    env:                 # given to the workers
+      AWS_ACCESS_KEY_ID: ${S3_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET}
+      FFFLEET_S3_ENDPOINT: https://hel1.your-objectstorage.com
+    hetzner:
+      token: ${HCLOUD_TOKEN}
+      serverType: cpx41
+      location: hel1
+      firewalls: [12345]

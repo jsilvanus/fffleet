@@ -40,6 +40,42 @@ FFFLEET_TOKEN=c FFFLEET_WORKER_TOKEN=w npx fffleet-orchestrator
 FFFLEET_ORCHESTRATOR_URL=http://localhost:5000 FFFLEET_WORKER_TOKEN=w PORT=5101 npx fffleet-worker
 ```
 
+## Autoscaling
+
+Give the orchestrator a config file and it starts workers when jobs wait and removes them when they are idle. Pools are tried in the order they are written, so put free capacity first and paid capacity last. The format is YAML (JSON also works); [`fffleet.example.yaml`](fffleet.example.yaml) is a complete example.
+
+```yaml
+publicUrl: https://orchestrator.example.com   # how new workers reach the orchestrator (docker, hetzner)
+autoscale:
+  scaleUpAfter: 10s     # a job must wait this long before it starts a worker
+  idleAfter: 5m
+  maxWorkers: 10
+pools:
+  - name: local
+    provider: process   # child processes of the orchestrator, on its own machine
+    max: 2
+    kinds: [batch]
+    slots: auto
+  - name: cloud
+    provider: hetzner
+    max: 5
+    kinds: [batch, stream]
+    slots: auto
+    hetzner: { token: "${HCLOUD_TOKEN}", serverType: cpx41, location: hel1 }
+```
+
+```sh
+FFFLEET_CONFIG=fffleet.yaml FFFLEET_TOKEN=c npx fffleet-orchestrator    # or --config fffleet.yaml
+```
+
+- **Providers:** `process` starts workers beside the orchestrator (install `fffleet-worker`, or set `process.command`). `docker` starts containers on a Docker network the orchestrator shares (mount the Docker socket, set `docker.network`). `hetzner` creates Cloud servers that run the worker image, labelled so a restarted orchestrator finds them again, and deletes them near the end of their paid hour once idle.
+- **Pool settings:** `min` (kept running; default 0), `max` (default 1), `kinds`, `slots`, `capabilities`, `env` (given to its workers), `idleAfter`, `maxConcurrentCreates`. A job goes to the first pool that has the kind and capabilities it needs. S3 credentials in a pool's `env` give the pool `scheme:s3`.
+- **Slots:** a worker's `slots` (or `FFFLEET_SLOTS`) can be `auto`, sized from its CPU count: batch only gets cores/2 slots, stream only gets cores slots, and a worker taking both gets `default` = cores/2 plus `stream` = cores/4. `auto:N` assumes N cores per slot. Explicit values (`default=2,stream=1`) still work.
+- **Kinds:** a worker takes `batch` jobs (finish and exit: encodes), `stream` jobs (run until stopped: relays, live encodes), or both (`FFFLEET_KINDS`, default both). Stream workers are best sized by slots only, and batch workers are the ones to scale down freely.
+- **Joining:** each new worker is given its own join secret, derived from the orchestrator's signing key (`FFFLEET_SIGNING_KEY_FILE`) or `autoscale.joinSecret`. Set one of them, or workers started before an orchestrator restart cannot rejoin.
+- **Watching:** `GET /v1/pools` (admin) shows instances per pool, and `fffleet_autoscaler_*` metrics count them, creations and removals.
+- **Hetzner notes:** the orchestrator must be reachable at `publicUrl` from the new servers (use HTTPS in front of it, or a private `network` with `advertise: private`); the `fffleet-worker` image must be pullable (public on ghcr, or set `hetzner.registry`); restrict the worker port with a firewall.
+
 ## Logins: many apps, one orchestrator
 
 Each app that uses the orchestrator gets its own client id and secret and logs in for a short-lived token (OAuth2 client credentials, `POST /v1/auth/token`). Apps never share a secret, and removing an app ends its access.

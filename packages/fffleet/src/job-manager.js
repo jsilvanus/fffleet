@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { mkdir, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { availableParallelism, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { canonicalJson, implicitRequirements, parseSpec } from './contract.js';
+import { KINDS, canonicalJson, implicitRequirements, parseSpec } from './contract.js';
 import { createS3Client } from './s3.js';
 import { runFfmpegJob } from './executor.js';
 import { FleetError, JobRecord, byPriority, pruneFinished } from './job-record.js';
@@ -22,7 +22,8 @@ import { FleetError, JobRecord, byPriority, pruneFinished } from './job-record.j
 export class JobManager extends EventEmitter {
   /**
    * @param {object} [opts]
-   * @param {Record<string, number>} [opts.slots]
+   * @param {Record<string, number> | string} [opts.slots]   Pools, or 'auto' / 'auto:<cores per job>' to size them from this machine's CPUs.
+   * @param {('batch' | 'stream')[]} [opts.kinds]             Job kinds this runner accepts (both by default).
    * @param {string} [opts.workRoot]
    * @param {string} [opts.ffmpegPath]
    * @param {number} [opts.maxQueued]
@@ -35,6 +36,7 @@ export class JobManager extends EventEmitter {
    */
   constructor({
     slots = { default: 2 },
+    kinds = KINDS,
     workRoot = join(tmpdir(), 'fffleet'),
     ffmpegPath = 'ffmpeg',
     maxQueued = 1000,
@@ -46,7 +48,8 @@ export class JobManager extends EventEmitter {
     s3 = null,
   } = {}) {
     super();
-    this.slots = normalizeSlots(slots);
+    this.kinds = normalizeKinds(kinds);
+    this.slots = normalizeSlots(slots, { kinds: this.kinds });
     this.used = Object.fromEntries(Object.keys(this.slots).map(k => [k, 0]));
     this.workRoot = workRoot;
     this.ffmpegPath = ffmpegPath;
@@ -84,6 +87,9 @@ export class JobManager extends EventEmitter {
         throw new FleetError('ID_CONFLICT', `job ${spec.id} already exists with a different spec`, { status: 409 });
       }
       return { created: false, job: existing.snapshot() };
+    }
+    if (!this.kinds.includes(spec.kind)) {
+      throw new FleetError('UNSUPPORTED_KIND', `this runner only takes ${this.kinds.join(' and ')} jobs`, { status: 422 });
     }
     if (!this.executors[spec.type]) {
       throw new FleetError('UNSUPPORTED_TYPE', `no executor for job type "${spec.type}"`, { status: 422 });
@@ -243,8 +249,44 @@ export class JobManager extends EventEmitter {
   }
 }
 
-/** Parses "default=2,stream=1" or an object into { pool: count }. */
-export function normalizeSlots(slots) {
+/** Parses "batch", "stream", "batch,stream" or an array into a list of job kinds. */
+export function normalizeKinds(kinds) {
+  const list = (typeof kinds === 'string' ? kinds.split(',') : kinds ?? []).map(k => String(k).trim()).filter(Boolean);
+  if (!list.length) return [...KINDS];
+  for (const k of list) if (!KINDS.includes(k)) throw new Error(`invalid job kind "${k}"; kinds are ${KINDS.join(' and ')}`);
+  return [...new Set(list)];
+}
+
+/**
+ * Slot pools sized from the CPU count. A batch job (an encode) is assumed to use about two cores,
+ * a stream job (a relay or a light live encode) about one; `auto:N` sets the cores per slot.
+ *
+ * - batch and stream: `default` for batch work plus a separate `stream` pool of a quarter of the cores.
+ * - batch only: `default` = cores / 2.
+ * - stream only: `default` = cores.
+ *
+ * @param {{ cpus?: number, kinds?: string[], coresPerSlot?: number }} [opts]
+ */
+export function autoSlots({ cpus = availableParallelism(), kinds = KINDS, coresPerSlot } = {}) {
+  const streamOnly = kinds.length === 1 && kinds[0] === 'stream';
+  const per = coresPerSlot ?? (streamOnly ? 1 : 2);
+  const slots = { default: Math.max(1, Math.floor(cpus / per)) };
+  if (kinds.includes('batch') && kinds.includes('stream') && coresPerSlot === undefined) slots.stream = Math.max(1, Math.floor(cpus / 4));
+  return slots;
+}
+
+/**
+ * Parses "default=2,stream=1", "auto", "auto:1" or an object into { pool: count }.
+ * @param {string | Record<string, number | string>} slots
+ * @param {{ kinds?: string[], cpus?: number }} [opts]   used by "auto"
+ */
+export function normalizeSlots(slots, { kinds = KINDS, cpus } = {}) {
+  const auto = typeof slots === 'string' ? slots.trim().match(/^auto(?::(\d+(?:\.\d+)?))?$/) : null;
+  if (auto) {
+    const coresPerSlot = auto[1] === undefined ? undefined : Number(auto[1]);
+    if (coresPerSlot !== undefined && !(coresPerSlot > 0)) throw new Error(`invalid slots "${slots}": cores per slot must be above 0`);
+    return autoSlots({ kinds, cpus, coresPerSlot });
+  }
   const obj = typeof slots === 'string'
     ? Object.fromEntries(slots.split(',').map(s => s.trim()).filter(Boolean).map(s => s.split('=').map(x => x.trim())))
     : slots;
