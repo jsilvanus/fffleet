@@ -10,7 +10,8 @@ docker run -p 5100:5100 -e FFFLEET_TOKEN=secret ghcr.io/jsilvanus/fffleet-worker
 | Variable | Default | |
 |---|---|---|
 | `PORT`, `HOST` | `5100`, `0.0.0.0` | |
-| `FFFLEET_TOKEN` | `FFFLEET_WORKER_TOKEN` | Bearer token callers must send. With neither set the API is open. |
+| `FFFLEET_TOKEN` | `FFFLEET_WORKER_TOKEN` | Bearer token callers must send (full access, and what the orchestrator uses). With neither set the API is open. |
+| `FFFLEET_KEYS_URL` | the orchestrator's `/v1/auth/keys` when a token and an orchestrator are set | Also accept tokens the orchestrator issued, with their scopes. |
 | `FFFLEET_SLOTS` | `default=2` | Slot pools, e.g. `default=2,stream=1`. |
 | `FFFLEET_CAPABILITIES` | | Extra capabilities, comma separated, e.g. `mount:/media,site:hel1`. |
 | `FFFLEET_ORCHESTRATOR_URL` | | Register and heartbeat here. |
@@ -28,5 +29,7 @@ The worker detects `type:ffmpeg`, `ffmpeg:<version>`, `filter:*`, `encoder:*` an
 The Docker image is Debian's ffmpeg build, with x264, x265, vpx, aom, lame, opus, libass and freetype, plus DejaVu fonts.
 
 Programmatic use: `import { createWorker } from 'fffleet-worker'`. Pass `executors` to add job types other than ffmpeg.
+
+`GET /metrics` (Prometheus text format, `metrics` scope or the static token) reports slots, running jobs with their encoding speed and fps, ffmpeg CPU and memory, bytes staged and uploaded, and host load and memory.
 
 License: EUPL-1.2

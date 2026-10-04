@@ -45,7 +45,7 @@ export async function readSse(body, onEvent) {
  *
  * @param {object} opts
  * @param {string} opts.url            .../v1/jobs/:id/events
- * @param {Record<string, string>} [opts.headers]
+ * @param {Record<string, string> | (() => Promise<Record<string, string>> | Record<string, string>)} [opts.headers]   A function is called on every (re)connect, so tokens can be refreshed.
  * @param {(event: import('./types.js').JobEvent) => void} opts.onEvent
  * @param {AbortSignal} [opts.signal]
  * @param {number} [opts.maxRetries]
@@ -60,8 +60,9 @@ export async function followJobEvents({ url, headers = {}, onEvent, signal, maxR
   while (!finalEvent) {
     signal?.throwIfAborted();
     try {
+      const current = typeof headers === 'function' ? await headers() : headers;
       const res = await f(url, {
-        headers: { accept: 'text/event-stream', ...headers, ...(lastSeq ? { 'last-event-id': String(lastSeq) } : {}) },
+        headers: { accept: 'text/event-stream', ...current, ...(lastSeq ? { 'last-event-id': String(lastSeq) } : {}) },
         signal,
       });
       if (!res.ok || !res.body) {

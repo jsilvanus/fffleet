@@ -1,7 +1,10 @@
 import { hostname } from 'node:os';
 import { readFileSync } from 'node:fs';
 import { JobManager, detectCapabilities } from 'fffleet';
-import { close, createApiHandler, listen } from 'fffleet/server';
+import {
+  Registry, close, createApiHandler, createAuthenticator, createRemoteKeySet, createTokenVerifier,
+  hostMetrics, jobMetrics, listen, procStats, processMetrics,
+} from 'fffleet/server';
 
 const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
@@ -13,7 +16,8 @@ const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.u
  * @param {string} [opts.id]
  * @param {number} [opts.port]
  * @param {string} [opts.host]
- * @param {string | null} [opts.token]              Required from callers (the orchestrator or a client).
+ * @param {string | null} [opts.token]              Static token that is granted full access (the orchestrator sends it).
+ * @param {string | null} [opts.keysUrl]            An orchestrator's /v1/auth/keys: tokens it issued are accepted too, with their scopes.
  * @param {Record<string, number> | string} [opts.slots]
  * @param {string} [opts.ffmpegPath]
  * @param {string} [opts.workRoot]
@@ -32,6 +36,7 @@ export function createWorker({
   port = 5100,
   host = '0.0.0.0',
   token = null,
+  keysUrl = null,
   slots = { default: 2 },
   ffmpegPath = 'ffmpeg',
   workRoot,
@@ -51,6 +56,49 @@ export function createWorker({
   let url = null;
   let heartbeat = null;
   let registered = false;
+
+  const authenticate = createAuthenticator({
+    token,
+    verify: keysUrl ? createTokenVerifier({ getKey: createRemoteKeySet(keysUrl) }) : null,
+    open: !token && !keysUrl,
+  });
+
+  const registry = new Registry();
+  processMetrics(registry);
+  hostMetrics(registry, manager.workRoot);
+  const jobStats = jobMetrics(registry, () => manager.jobs.values());
+  manager.on('job', record => jobStats.track(record));
+  const slotsTotal = registry.gauge('fffleet_slots', 'Slots per pool.', ['pool']);
+  const slotsUsed = registry.gauge('fffleet_slots_used', 'Slots in use per pool.', ['pool']);
+  const queued = registry.gauge('fffleet_queue_length', 'Jobs waiting for a slot on this worker.');
+  const speed = registry.gauge('fffleet_job_speed', 'Encoding speed of a running job as a multiple of real time.', ['job', 'owner', 'class']);
+  const fps = registry.gauge('fffleet_job_fps', 'Frames per second of a running job.', ['job', 'owner', 'class']);
+  const procCpu = registry.gauge('fffleet_ffmpeg_cpu_seconds', 'CPU time used so far by a running ffmpeg process (Linux).', ['job']);
+  const procRss = registry.gauge('fffleet_ffmpeg_resident_memory_bytes', 'Resident memory of a running ffmpeg process (Linux).', ['job']);
+  const transferred = registry.counter('fffleet_transfer_bytes_total', 'Bytes staged in and uploaded out of this worker.', ['direction', 'scheme']);
+  const info = registry.gauge('fffleet_build_info', 'Version of this fffleet process.', ['role', 'version', 'worker']);
+  info.set({ role: 'worker', version: VERSION, worker: id }, 1);
+  manager.on('transfer', t => transferred.inc({ direction: t.direction, scheme: t.scheme }, t.bytes));
+  registry.collect(async () => {
+    for (const g of [slotsTotal, slotsUsed, speed, fps, procCpu, procRss]) g.reset();
+    const stats = manager.stats();
+    for (const [pool, p] of Object.entries(stats.pools)) {
+      slotsTotal.set({ pool }, p.total);
+      slotsUsed.set({ pool }, p.used);
+    }
+    queued.set({}, stats.queued);
+    for (const r of manager.jobs.values()) {
+      if (r.state !== 'running') continue;
+      const l = { job: r.id, owner: r.spec.owner, class: r.spec.class };
+      if (r.progress?.speed != null) speed.set(l, r.progress.speed);
+      if (r.progress?.fps != null) fps.set(l, r.progress.fps);
+      const ps = r.run?.pid ? await procStats(r.run.pid) : null;
+      if (ps) {
+        procCpu.set({ job: r.id }, ps.cpuSeconds);
+        procRss.set({ job: r.id }, ps.rssBytes);
+      }
+    }
+  });
 
   const backend = {
     submit: spec => manager.submit(spec),
@@ -84,6 +132,7 @@ export function createWorker({
   return {
     id,
     manager,
+    registry,
     get url() {
       return url;
     },
@@ -96,7 +145,7 @@ export function createWorker({
       const types = Object.keys(manager.executors).filter(t => t !== 'ffmpeg').map(t => `type:${t}`);
       const schemes = manager.s3 ? ['scheme:s3'] : [];
       capabilities = [...new Set([...(await detectCapabilities(ffmpegPath)), ...types, ...schemes, ...extraCapabilities])].sort();
-      ({ server, url } = await listen(createApiHandler({ backend, token }), { port, host }));
+      ({ server, url } = await listen(createApiHandler({ backend, authenticate, metrics: () => registry.render() }), { port, host }));
       log(`fffleet-worker ${id} listening on ${url} with slots ${JSON.stringify(manager.slots)}`);
       if (orchestratorUrl) {
         await register().catch(err => log(`first registration failed, retrying: ${err.message}`));

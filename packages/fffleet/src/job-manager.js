@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,8 +15,11 @@ import { FleetError, JobRecord, byPriority, pruneFinished } from './job-record.j
  *
  * Slots: `{ default: 2, stream: 1 }` means two jobs of any class plus one extra slot
  * reserved for class "stream". A class without its own pool uses "default".
+ *
+ * Events: 'job' (record) for every new job, 'transfer' ({ direction: 'in' | 'out', scheme, bytes })
+ * after an input is staged or an output uploaded.
  */
-export class JobManager {
+export class JobManager extends EventEmitter {
   /**
    * @param {object} [opts]
    * @param {Record<string, number>} [opts.slots]
@@ -41,6 +45,7 @@ export class JobManager {
     fetch: fetchImpl,
     s3 = null,
   } = {}) {
+    super();
     this.slots = normalizeSlots(slots);
     this.used = Object.fromEntries(Object.keys(this.slots).map(k => [k, 0]));
     this.workRoot = workRoot;
@@ -99,6 +104,7 @@ export class JobManager {
     this.jobs.set(spec.id, record);
     this.queue.push(record);
     this.queue.sort(byPriority);
+    this.emit('job', record);
     this.pump();
     return { created: true, queued: this.queue.includes(record), job: record.snapshot() };
   }
@@ -173,7 +179,7 @@ export class JobManager {
 
   start(record, pool) {
     const abort = new AbortController();
-    const run = { abort, stdin: null, done: null };
+    const run = { abort, stdin: null, done: null, pid: null };
     record.run = run;
     let timer = null;
     if (record.spec.timeoutMs) {
@@ -188,7 +194,8 @@ export class JobManager {
       ffmpegPath: this.ffmpegPath,
       fetch: this.fetch,
       s3: this.s3,
-      setState: state => {
+      setState: (state, extra) => {
+        if (extra?.pid) run.pid = extra.pid;
         if (!abort.signal.aborted) record.push({ state, ...(this.workerId ? { workerId: this.workerId } : {}) });
       },
       progress: p => {
@@ -202,6 +209,9 @@ export class JobManager {
       },
       attachStdin: s => {
         run.stdin = s;
+      },
+      transfer: (direction, scheme, bytes) => {
+        if (bytes > 0) this.emit('transfer', { direction, scheme, bytes });
       },
     };
 
@@ -224,6 +234,7 @@ export class JobManager {
       } finally {
         clearTimeout(timer);
         run.stdin = null;
+        run.pid = null;
         this.used[pool]--;
         await rm(workDir, { recursive: true, force: true }).catch(() => {});
         if (!this.closed) this.pump();
