@@ -55,6 +55,11 @@ export class JobHandle extends EventEmitter {
     return this._stdout();
   }
 
+  /** Closes the job's stdin (EOF for ffmpeg), after the last write. */
+  endStdin() {
+    return this._endStdin();
+  }
+
   /** Writes to the job's stdin (spec.stdin must be true). */
   write(data) {
     return this._write(typeof data === 'string' ? Buffer.from(data) : data);
@@ -113,6 +118,7 @@ export function createFleet({ url, token, clientId, clientSecret, scope, fallbac
     const handle = new JobHandle(job.id, 'local');
     handle._cancel = async () => m.cancel(job.id);
     handle._write = data => m.writeStdin(job.id, data);
+    handle._endStdin = () => m.closeStdin(job.id);
     handle._stdout = async () => m.openStdout(job.id);
     m.subscribe(job.id, 0, event => {
       handle._event(event);
@@ -133,6 +139,7 @@ export function createFleet({ url, token, clientId, clientSecret, scope, fallbac
     const enc = encodeURIComponent(job.id);
     handle._cancel = () => request('DELETE', `/v1/jobs/${enc}`);
     handle._write = data => request('POST', `/v1/jobs/${enc}/stdin`, data, { 'content-type': 'application/octet-stream' });
+    handle._endStdin = () => request('POST', `/v1/jobs/${enc}/stdin/close`);
     handle._stdout = async () => getStream(`${base}/v1/jobs/${enc}/stdout`, { headers: await authHeaders(), signal: ac.signal });
     followJobEvents({ url: `${base}/v1/jobs/${enc}/events`, headers: authHeaders, signal: ac.signal, fetch: f, onEvent: e => handle._event(e) })
       .then(async () => {

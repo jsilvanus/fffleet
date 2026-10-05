@@ -167,6 +167,17 @@ export class JobManager extends EventEmitter {
     return { bytes: Buffer.byteLength(data) };
   }
 
+  /** Closes a running job's stdin (EOF to ffmpeg), e.g. after sending a whole input. */
+  async closeStdin(id) {
+    const record = this.jobs.get(id);
+    if (!record) throw new FleetError('NOT_FOUND', `job ${id} not found`, { status: 404 });
+    if (!record.spec.stdin) throw new FleetError('NO_STDIN', 'job was not started with stdin: true', { status: 409 });
+    const stdin = record.run?.stdin;
+    if (!stdin || record.final) throw new FleetError('NOT_RUNNING', 'job is not running', { status: 409 });
+    await new Promise(resolve => stdin.end(resolve));
+    return { closed: true };
+  }
+
   /**
    * Opens a stdout job's output as a Readable (one reader per job; it ends when the job does).
    * Until a reader is attached ffmpeg stalls once the pipe's buffer is full.

@@ -154,6 +154,7 @@ One resource, `/v1/jobs`, served the same way by a worker and by the orchestrato
 | `DELETE /v1/jobs/:id` | Cancels (202). |
 | `GET /v1/jobs/:id/events` | SSE, see above. |
 | `POST /v1/jobs/:id/stdin` | Raw body written to ffmpeg. |
+| `POST /v1/jobs/:id/stdin/close` | Ends ffmpeg's stdin (EOF), after the last write. |
 | `GET /v1/jobs/:id/stdout` | `stdout: true` jobs: ffmpeg's stdout as a binary stream. The orchestrator waits while the job is queued. 409 if taken. |
 | `POST /v1/workers/register` | Orchestrator only, worker token. Also the heartbeat. |
 | `GET /v1/workers`, `POST /v1/workers/:id/drain` | Orchestrator only, `admin` scope. |

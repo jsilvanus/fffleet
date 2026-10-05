@@ -220,6 +220,8 @@ export class JobHandle extends EventEmitter {
   readonly done: Promise<JobSnapshot>;
   cancel(): Promise<unknown>;
   write(data: Buffer | string): Promise<{ bytes: number }>;
+  /** Closes ffmpeg's stdin (EOF) after the last write. */
+  endStdin(): Promise<{ closed: boolean }>;
   /** ffmpeg's stdout as a Readable (the job must have been submitted with `stdout: true`). */
   stdout(): Promise<import('node:stream').Readable>;
   on(event: 'event', listener: (event: JobEvent) => void): this;

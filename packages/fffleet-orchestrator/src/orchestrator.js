@@ -396,6 +396,15 @@ export function createOrchestrator({
       if (!res.ok) throw new FleetError(body?.error?.code ?? 'STDIN_FAILED', body?.error?.message ?? `HTTP ${res.status}`, { status: res.status });
       return { bytes: body?.bytes ?? data.length };
     },
+    async closeStdin(id) {
+      const job = jobs.get(id);
+      if (!job) throw new FleetError('NOT_FOUND', `job ${id} not found`, { status: 404 });
+      if (job.final || !job.worker || job.state === 'queued') throw new FleetError('NOT_RUNNING', 'job is not running', { status: 409 });
+      const res = await fetch(`${job.worker.url}/v1/jobs/${encodeURIComponent(id)}/stdin/close`, { method: 'POST', headers: workerHeaders(job.worker), signal: AbortSignal.timeout(5000) });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new FleetError(body?.error?.code ?? 'STDIN_FAILED', body?.error?.message ?? `HTTP ${res.status}`, { status: res.status });
+      return { closed: true };
+    },
     /** Streams a running job's stdout from its worker; waits while the job is still queued. */
     async openStdout(id) {
       const job = jobs.get(id);

@@ -15,6 +15,7 @@ const SSE_KEEPALIVE_MS = 15000;
  * @property {() => any[]} list
  * @property {(id: string) => any | Promise<any>} cancel
  * @property {(id: string, data: Buffer) => Promise<any>} writeStdin
+ * @property {(id: string) => Promise<any>} closeStdin
  * @property {(id: string) => import('node:stream').Readable | Promise<import('node:stream').Readable>} openStdout
  * @property {(id: string, afterSeq: number, fn: (e: any) => void) => () => void} subscribe
  * @property {() => any} capabilities
@@ -62,7 +63,7 @@ export function createApiHandler({ backend, token = null, authenticate = createA
         if (req.method === 'GET') return send(res, 200, { jobs: backend.list().filter(mine) });
       }
 
-      const m = url.pathname.match(/^\/v1\/jobs\/([^/]+)(\/events|\/stdin|\/stdout)?$/);
+      const m = url.pathname.match(/^\/v1\/jobs\/([^/]+)(\/events|\/stdin|\/stdin\/close|\/stdout)?$/);
       if (m) {
         const id = decodeURIComponent(m[1]);
         // Someone else's job answers 404, the same as a job that does not exist.
@@ -73,6 +74,7 @@ export function createApiHandler({ backend, token = null, authenticate = createA
           return job ? send(res, 202, job) : notFound(res, id);
         }
         if (m[2] === '/events' && req.method === 'GET') return streamEvents(req, res, url, backend, id);
+        if (m[2] === '/stdin/close' && req.method === 'POST') return send(res, 200, { ok: true, ...(await backend.closeStdin(id)) });
         if (m[2] === '/stdout' && req.method === 'GET') {
           const stream = await backend.openStdout(id);
           res.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' });
