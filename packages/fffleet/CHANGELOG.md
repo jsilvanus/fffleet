@@ -1,5 +1,11 @@
 # fffleet
 
+## 2.2.0
+
+### Minor Changes
+
+- a07c011: Built-in `ffprobe` job type: probes one `file:`, `http(s):` or `s3:` input and returns ffprobe's JSON inline in the job result (`outputs[].data`, `uri: 'inline:'`). Workers advertise `type:ffprobe` when ffprobe is installed. `OutputResult` gained an optional `data` field.
+
 ## 2.1.1
 
 ### Patch Changes
