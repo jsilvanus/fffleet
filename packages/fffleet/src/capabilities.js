@@ -1,11 +1,12 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { siblingProbe } from './ffprobe.js';
 
 const run = promisify(execFile);
 
 /**
  * Lists what this machine can do, as capability strings matched against a spec's `requires`:
- * `type:ffmpeg`, `ffmpeg:<major.minor>`, `filter:<name>`, `encoder:<name>`, `font:<family>`.
+ * `type:ffmpeg`, `type:ffprobe`, `ffmpeg:<major.minor>`, `filter:<name>`, `encoder:<name>`, `font:<family>`.
  * Missing tools simply contribute nothing.
  *
  * @param {string} [ffmpegPath]
@@ -24,6 +25,7 @@ export async function detectCapabilities(ffmpegPath = 'ffmpeg') {
   const version = await out(ffmpegPath, ['-hide_banner', '-version']);
   const v = version.match(/ffmpeg version n?(\d+)\.(\d+)/);
   if (version) caps.add('type:ffmpeg');
+  if (await out(siblingProbe(ffmpegPath), ['-hide_banner', '-version'])) caps.add('type:ffprobe');
   if (v) caps.add(`ffmpeg:${v[1]}.${v[2]}`);
 
   // " T.. ass               V->V       Render ASS subtitles..."

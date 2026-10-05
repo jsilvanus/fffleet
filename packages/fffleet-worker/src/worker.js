@@ -147,8 +147,8 @@ export function createWorker({
     },
 
     async start() {
-      // type:ffmpeg comes from detection, so a machine without ffmpeg does not claim it.
-      const types = Object.keys(manager.executors).filter(t => t !== 'ffmpeg').map(t => `type:${t}`);
+      // type:ffmpeg and type:ffprobe come from detection, so a machine without ffmpeg does not claim it.
+      const types = Object.keys(manager.executors).filter(t => t !== 'ffmpeg' && t !== 'ffprobe').map(t => `type:${t}`);
       const schemes = manager.s3 ? ['scheme:s3'] : [];
       capabilities = [...new Set([...(await detectCapabilities(ffmpegPath)), ...types, ...schemes, ...extraCapabilities])].sort();
       ({ server, url } = await listen(createApiHandler({ backend, authenticate, metrics: () => registry.render() }), { port, host }));
