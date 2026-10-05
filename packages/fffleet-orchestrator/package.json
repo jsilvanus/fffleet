@@ -1,6 +1,6 @@
 {
   "name": "fffleet-orchestrator",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "fffleet orchestrator: schedules ffmpeg jobs across a pool of fffleet workers",
   "type": "module",
   "main": "./src/orchestrator.js",
@@ -21,7 +21,7 @@
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
-    "fffleet": "^1.0.0"
+    "fffleet": "^2.0.0"
   },
   "keywords": [
     "ffmpeg",
@@ -46,7 +46,7 @@
     "access": "public"
   },
   "peerDependencies": {
-    "fffleet-worker": "^1.0.0"
+    "fffleet-worker": "^2.0.0"
   },
   "peerDependenciesMeta": {
     "fffleet-worker": {

@@ -1,5 +1,18 @@
 # fffleet-worker
 
+## 2.0.0
+
+### Minor Changes
+
+- 6743a03: `fffleet-worker` loads extra job types from modules listed in `FFFLEET_EXECUTORS`, so jobs that are not ffmpeg (a poller, an analyser) can run on the fleet and be routed by `type:<type>`.
+- 68b25ac: Stream jobs can hand ffmpeg's stdout to the submitter (`stdout: true`, `job.stdout()`, `GET /v1/jobs/:id/stdout`, relayed by the orchestrator), for raw audio or video that a consumer processes as it arrives. `job.endStdin()` (`POST /v1/jobs/:id/stdin/close`) sends EOF to a job's stdin.
+
+### Patch Changes
+
+- Updated dependencies [6743a03]
+- Updated dependencies [68b25ac]
+  - fffleet@2.0.0
+
 ## 1.0.0
 
 ### Minor Changes
