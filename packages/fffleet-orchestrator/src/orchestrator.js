@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { createAutoscaler } from './autoscaler.js';
 import { createProviders } from './providers/index.js';
+import { openSqliteJobStore } from './job-store.js';
 import { randomUUID } from 'node:crypto';
 import { FleetError, JobRecord, byPriority, canonicalJson, followJobEvents, implicitRequirements, normalizeKinds, normalizeSlots, parseSpec, pruneFinished, satisfies } from 'fffleet';
 import {
@@ -16,7 +17,10 @@ const REDISPATCH_DELAY_MS = 500;
  * to a worker with a free slot in the job's class and the capabilities it requires, relays the
  * worker's events, and fails jobs whose worker stops sending heartbeats.
  *
- * State is in memory: a restart forgets queued and running jobs (workers keep running theirs).
+ * Jobs are kept in memory. With `stateFile` (or a `store`) they are also saved, and a restart brings them back:
+ * queued jobs go back in the queue, running batch jobs are picked up again when their worker reports them
+ * (or fail with ORCHESTRATOR_RESTARTED after `adoptGraceMs`), and stream jobs fail, since the client's
+ * connection to them is gone.
  *
  * @param {object} [opts]
  * @param {number} [opts.port]
@@ -35,6 +39,9 @@ const REDISPATCH_DELAY_MS = 500;
  * @param {number} [opts.maxQueued]
  * @param {number} [opts.keepFinished]          Finished jobs remembered for status and idempotency.
  * @param {number} [opts.lostJobGraceMs]        How long a dispatched job may be missing from a heartbeat.
+ * @param {string | null} [opts.stateFile]       SQLite file to save jobs in (needs Node 22.13+). Without it a restart forgets the jobs.
+ * @param {{ save(job: JobRecord): void, loadAll(): object[], prune(keep: number): void, close(): void } | null} [opts.store]  A job store of your own, instead of `stateFile`.
+ * @param {number} [opts.adoptGraceMs]          After a restart, how long a running job waits for its worker to report it.
  * @param {number} [opts.dispatchCooldownMs]    How long a worker that answered a dispatch with 5xx gets no new jobs.
  * @param {(msg: string) => void} [opts.log]
  */
@@ -56,6 +63,9 @@ export function createOrchestrator({
   keepFinished = 1000,
   lostJobGraceMs = 10000,
   dispatchCooldownMs = 5000,
+  stateFile = null,
+  store = null,
+  adoptGraceMs = 30000,
   log = () => {},
 } = {}) {
   /** @type {Map<string, Worker>} */
@@ -64,6 +74,10 @@ export function createOrchestrator({
   const jobs = new Map();
   /** @type {Job[]} */
   const queue = [];
+  /** Jobs restored as running, waiting for their worker to report them. */
+  const adopting = new Map();
+  let jobStore = store;
+  const lastSaved = new WeakMap();
   let server = null;
   let url = null;
   let sweeper = null;
@@ -171,6 +185,67 @@ export function createOrchestrator({
       pump();
     }, delay);
     pumpTimer.unref?.();
+  }
+
+  function persist(job, event = null) {
+    if (!jobStore) return;
+    // Progress arrives every second or so per job; the state changes are what a restart needs.
+    const now = Date.now();
+    if (event && !job.final && event.progress && event.state === lastSaved.get(job)?.state && now - (lastSaved.get(job)?.at ?? 0) < 1000) return;
+    try {
+      jobStore.save(job);
+      lastSaved.set(job, { state: job.state, at: now });
+    } catch (err) {
+      log(`could not save job ${job.id}: ${err.message}`);
+    }
+  }
+
+  function track(job) {
+    job.emitter.on('event', e => persist(job, e));
+    persist(job);
+  }
+
+  function restore() {
+    const now = Date.now();
+    let queued = 0;
+    let running = 0;
+    let finished = 0;
+    for (const saved of jobStore.loadAll()) {
+      if (!saved?.spec?.id || jobs.has(saved.spec.id)) continue;
+      const job = /** @type {Job} */ (JobRecord.restore(saved.spec, saved));
+      jobs.set(job.id, job);
+      if (job.final) {
+        finished++;
+        track(job);
+        continue;
+      }
+      jobStats.track(job);
+      track(job);
+      if (job.state === 'queued') {
+        enqueue(job);
+        queued++;
+      } else if (job.spec.kind === 'stream') {
+        job.push({ state: 'failed', error: { code: 'ORCHESTRATOR_RESTARTED', message: 'the orchestrator restarted; a stream job cannot be picked up again' } });
+      } else {
+        adopting.set(job.id, { job, deadline: now + adoptGraceMs });
+        running++;
+      }
+    }
+    log(`restored ${queued} queued, ${running} running and ${finished} finished jobs from the state file`);
+  }
+
+  /** A restored job whose worker reported it again: attach to it like a fresh dispatch that already succeeded. */
+  function adopt(job, worker) {
+    const pool = poolFor(worker, job.spec.class);
+    worker.used[pool] = (worker.used[pool] ?? 0) + 1;
+    worker.jobs.add(job.id);
+    job.worker = worker;
+    job.pool = pool;
+    job.released = false;
+    job.assignedAt = Date.now();
+    log(`job ${job.id} picked up again on worker ${worker.id}`);
+    follow(job, worker);
+    if (job.cancelWanted) backend.cancel(job.id);
   }
 
   function enqueue(job) {
@@ -318,12 +393,28 @@ export function createOrchestrator({
         release(job, false);
       }
     }
+    if (adopting.size && Array.isArray(body.active)) {
+      for (const id of body.active) {
+        const entry = adopting.get(id);
+        if (!entry || entry.job.workerId !== worker.id) continue;
+        adopting.delete(id);
+        adopt(entry.job, worker);
+      }
+    }
     schedulePump();
     return { ok: true, heartbeatTimeoutMs };
   }
 
   function sweep() {
     const now = Date.now();
+    for (const [id, entry] of adopting) {
+      if (now < entry.deadline) continue;
+      adopting.delete(id);
+      const { job } = entry;
+      job.push(job.cancelWanted
+        ? { state: 'cancelled', error: { code: 'CANCELLED', message: 'cancelled (the orchestrator restarted and the worker did not report the job)' } }
+        : { state: 'failed', error: { code: 'ORCHESTRATOR_RESTARTED', message: `the orchestrator restarted and worker ${job.workerId ?? '?'} did not report the job within ${adoptGraceMs} ms` } });
+    }
     for (const worker of [...workers.values()]) {
       if (now - worker.lastSeen > heartbeatTimeoutMs) {
         m.workersLost.inc();
@@ -346,9 +437,11 @@ export function createOrchestrator({
       }
       if (queue.length >= maxQueued) throw new FleetError('QUEUE_FULL', 'queue is full', { status: 503 });
       pruneFinished(jobs, keepFinished);
+      jobStore?.prune(keepFinished);
       const job = /** @type {Job} */ (new JobRecord(spec));
       jobs.set(spec.id, job);
       jobStats.track(job);
+      track(job);
       enqueue(job);
       pump();
       return { created: true, queued: queue.includes(job), job: job.snapshot() };
@@ -368,6 +461,11 @@ export function createOrchestrator({
       if (idx >= 0) {
         queue.splice(idx, 1);
         job.push({ state: 'cancelled', error: { code: 'CANCELLED', message: 'cancelled before it started' } });
+        return job.snapshot();
+      }
+      if (adopting.has(id) && !job.worker) {
+        // Restored as running but its worker has not reported yet: cancel it when it does.
+        job.cancelWanted = true;
         return job.snapshot();
       }
       const worker = job.worker;
@@ -519,6 +617,8 @@ export function createOrchestrator({
       return url;
     },
     async start() {
+      if (!jobStore && stateFile) jobStore = await openSqliteJobStore(stateFile);
+      if (jobStore) restore();
       ({ server, url } = await listen(createApiHandler({ backend, authenticate, metrics: () => registry.render(), extraRoutes }), { port, host }));
       if (!token && !clientStore) log('no FFFLEET_TOKEN and no clients file: the job API is open to anyone who can reach it');
       sweeper = setInterval(sweep, sweepMs);
@@ -557,6 +657,7 @@ export function createOrchestrator({
       clearTimeout(pumpTimer);
       for (const job of jobs.values()) job.follow?.abort();
       if (server) await close(server);
+      jobStore?.close();
     },
   };
 }

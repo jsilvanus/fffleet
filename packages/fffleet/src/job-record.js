@@ -52,6 +52,25 @@ export class JobRecord {
   }
 
   /**
+   * Rebuilds a record from a saved one (an orchestrator restoring its jobs after a restart).
+   * Subscribers start from the saved history.
+   * @param {import('./types.js').JobSpec & { id: string }} spec
+   * @param {Record<string, any>} saved
+   */
+  static restore(spec, saved) {
+    const job = new JobRecord(spec);
+    for (const key of ['state', 'workerId', 'createdAt', 'startedAt', 'finishedAt', 'progress', 'exitCode', 'error', 'outputs', 'stderrTail', 'seq']) {
+      if (saved[key] !== undefined) job[key] = saved[key];
+    }
+    if (Array.isArray(saved.history) && saved.history.length) job.history = saved.history;
+    if (Number.isInteger(saved.order)) {
+      job.order = saved.order;
+      order = Math.max(order, saved.order);
+    }
+    return job;
+  }
+
+  /**
    * Appends an event. A state change or a final result updates the snapshot too.
    * Events after the final one are ignored, so a job is final exactly once.
    * @param {Partial<import('./types.js').JobEvent>} fields

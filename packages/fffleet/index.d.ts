@@ -282,6 +282,8 @@ export function followJobEvents(opts: {
 
 export class JobRecord {
   constructor(spec: JobSpec & { id: string });
+  /** Rebuilds a record from saved fields (state, history, order, ...). */
+  static restore(spec: JobSpec & { id: string }, saved: Record<string, unknown>): JobRecord;
   readonly id: string;
   readonly final: boolean;
   state: JobState;

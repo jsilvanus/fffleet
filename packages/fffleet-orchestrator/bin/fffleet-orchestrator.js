@@ -34,6 +34,8 @@ const orchestrator = createOrchestrator({
   workerToken: env.FFFLEET_WORKER_TOKEN || null,
   heartbeatTimeoutMs: Number(env.FFFLEET_HEARTBEAT_TIMEOUT_MS ?? 15000),
   maxQueued: Number(env.FFFLEET_MAX_QUEUED ?? 1000),
+  stateFile: env.FFFLEET_STATE_FILE || null,
+  adoptGraceMs: Number(env.FFFLEET_ADOPT_GRACE_MS ?? 30000),
   log,
 });
 
