@@ -32,4 +32,6 @@ While a job runs, `job.on('stderr', tail => ...)` and `job.stderrTail` give ffmp
 
 The job contract, routes and error codes are documented in the [repository README](https://github.com/jsilvanus/fffleet#the-job-contract-v1). The building blocks (`JobManager`, `validateSpec`, `followJobEvents`, …) are exported too. `fffleet/server` holds the HTTP API that the worker and the orchestrator use.
 
+See also the [integration guide](https://github.com/jsilvanus/fffleet/blob/main/docs/integration-guide.md).
+
 License: EUPL-1.2

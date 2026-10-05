@@ -278,6 +278,7 @@ export function createOrchestrator({
     }
     if (job.final) return release(job); // cancelled while dispatching; the cancel already reached the worker or will be ignored
     if (res.status >= 500) {
+      await res.body?.cancel().catch(() => {});
       log(`worker ${worker.id} answered ${res.status} for ${job.id}; trying elsewhere`);
       worker.cooldownUntil = Date.now() + dispatchCooldownMs;
       m.dispatchFailures.inc({ worker: worker.id, reason: 'server_error' });
@@ -289,6 +290,7 @@ export function createOrchestrator({
       job.push({ state: 'failed', error: { code: 'DISPATCH_REJECTED', message: `worker ${worker.id} rejected the job: ${body?.error?.message ?? `HTTP ${res.status}`}` } });
       return release(job);
     }
+    await res.body?.cancel().catch(() => {}); // the events stream tells us the rest
     follow(job, worker);
   }
 
@@ -356,6 +358,12 @@ export function createOrchestrator({
   function register(body, bearer = null) {
     if (!body || typeof body.id !== 'string' || !body.id || typeof body.url !== 'string') {
       throw new FleetError('INVALID_WORKER', 'register needs id and url', { status: 400 });
+    }
+    // The orchestrator calls this address and Prometheus scrapes it, so it has to be a plain http(s) URL.
+    try {
+      if (!['http:', 'https:'].includes(new URL(body.url).protocol)) throw new Error('not http(s)');
+    } catch {
+      throw new FleetError('INVALID_WORKER', 'url must be an http or https URL the orchestrator can reach', { status: 400 });
     }
     let slots;
     try {
@@ -622,6 +630,7 @@ export function createOrchestrator({
       if (jobStore) restore();
       ({ server, url } = await listen(createApiHandler({ backend, authenticate, metrics: () => registry.render(), extraRoutes }), { port, host }));
       if (!token && !clientStore) log('no FFFLEET_TOKEN and no clients file: the job API is open to anyone who can reach it');
+      if ((token || clientStore) && !workerToken && !scaling) log('no FFFLEET_WORKER_TOKEN: anyone who can reach this orchestrator can register a worker and receive jobs (docs/security.md)');
       sweeper = setInterval(sweep, sweepMs);
       sweeper.unref?.();
       log(`fffleet-orchestrator listening on ${url}`);

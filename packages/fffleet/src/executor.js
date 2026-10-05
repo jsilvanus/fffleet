@@ -84,11 +84,18 @@ export async function runFfmpegJob(spec, rt) {
 
   rt.signal.throwIfAborted();
 
+  let resolved;
+  try {
+    resolved = resolvePlaceholders(spec.ffmpeg.args, values);
+  } catch (err) {
+    // For example {{inputdir:x}} on a live input, which has no directory.
+    throw new FleetError('INVALID_SPEC', err.message, { status: 422 });
+  }
   const args = [
     '-hide_banner', '-nostats', '-loglevel', 'warning', ...(spec.stdout ? [] : ['-progress', 'pipe:1']),
     ...(spec.stdin ? [] : ['-nostdin']),
     ...(batch ? ['-y'] : []),
-    ...resolvePlaceholders(spec.ffmpeg.args, values),
+    ...resolved,
   ];
   const { exitCode, stderrTail } = await runProcess(rt.ffmpegPath ?? 'ffmpeg', args, spec, rt);
 

@@ -27,6 +27,17 @@ job.on('progress', p => console.log(p.pct));
 const result = await job.done; // { state: 'succeeded' | 'failed' | 'cancelled', outputs, error, ... }
 ```
 
+## Documentation
+
+| | |
+|---|---|
+| [Install and use](docs/getting-started.md) | From one process to a pool of workers with logins, step by step. |
+| [Integration guide](docs/integration-guide.md) | Building an application on the client: specs, ids, events, storage, capabilities, streams, custom job types. |
+| [Architecture](docs/architecture.md) | Components, a job's life, scheduling, failure model, autoscaling, authentication. |
+| [Operations](docs/operations.md) | Production setup, restarts, alerts, troubleshooting. |
+| [Security](docs/security.md) | Trust model, hardening checklist, known limitations. |
+| [Upgrading](docs/upgrading.md) | What changed between versions. |
+
 ## Running a fleet
 
 For a production setup (secrets, persistent files, restarts, alerts, troubleshooting) see [docs/operations.md](docs/operations.md); for what changed between versions, [docs/upgrading.md](docs/upgrading.md).
@@ -178,7 +189,7 @@ fffleet has no storage of its own: inputs and outputs are wherever their URIs po
   - A worker that is silent for `FFFLEET_HEARTBEAT_TIMEOUT_MS` (15 s) is dropped, and its jobs fail with `WORKER_LOST`.
   - So does a job its heartbeat stops listing, which happens when the worker restarted.
 - A worker that answers a dispatch with 5xx gets no new jobs for a while, and the job goes back to the queue. A 4xx fails the job with `DISPATCH_REJECTED`.
-- The orchestrator keeps its state in memory. If it restarts, it forgets its queue, while the workers finish what they were running.
+- The orchestrator keeps its jobs in memory, and in a SQLite file when `FFFLEET_STATE_FILE` is set. With the file, a restart brings queued jobs back and picks up running batch jobs again; without it the orchestrator forgets its queue while the workers finish what they were running. See [operations.md](docs/operations.md#restarts-and-upgrades).
 
 ## Development
 

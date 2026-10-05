@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { SCOPES, generateSecret, hashSecret } from 'fffleet';
 import { loadConfig } from '../src/config.js';
 import { createOrchestrator } from '../src/orchestrator.js';
@@ -79,7 +79,10 @@ async function addClient(args) {
   data.clients = (data.clients ?? []).filter(c => c.id !== id);
   const secret = generateSecret();
   data.clients.push({ id, secretHash: await hashSecret(secret), scopes });
-  writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
+  // Written beside the file and renamed, so a running orchestrator never reads half a file.
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
+  renameSync(tmp, file);
   console.log(`client ${id} (${scopes.join(', ')}) written to ${file}`);
   console.log(`client secret (shown once): ${secret}`);
 }

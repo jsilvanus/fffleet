@@ -112,6 +112,11 @@ test('auth: clients and workers use different tokens', async () => {
   assert.equal((await call(o, '/v1/workers/register', { method: 'POST', token: TOKEN, body: { id: 'x', url: 'http://x' } })).status, 401);
   assert.equal((await call(o, '/v1/workers/register', { method: 'POST', token: WORKER_TOKEN, body: { id: 'x' } })).status, 400);
   assert.equal((await call(o, '/v1/workers/register', { method: 'POST', token: WORKER_TOKEN, body: { id: 'x', url: 'http://x', slots: 'bad=-1' } })).status, 400);
+  // A worker address that is not an http(s) URL must not get in: it would break service discovery for everyone.
+  for (const url of ['not a url', 'file:///etc/passwd', 'ftp://x']) {
+    assert.equal((await call(o, '/v1/workers/register', { method: 'POST', token: WORKER_TOKEN, body: { id: 'bad', url } })).status, 400, url);
+  }
+  assert.equal((await call(o, '/v1/sd/prometheus', { token: TOKEN })).status, 200);
 });
 
 test('submit: 202 when no worker fits, 200 on repeat, 409 on conflict, 503 when the queue is full', async () => {

@@ -108,7 +108,13 @@ export function createFleet({ url, token, clientId, clientSecret, scope, fallbac
         signal: AbortSignal.timeout(requestTimeoutMs),
       });
       const text = await res.text();
-      const json = text ? JSON.parse(text) : null;
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        // A proxy's HTML error page: report the status, do not blame the JSON.
+        if (res.ok) throw new FleetError('BAD_RESPONSE', `${method} ${path} answered with something that is not JSON`, { status: res.status });
+      }
       // An expired or revoked token: log in again once.
       if (res.status === 401 && login && attempt === 0) continue;
       if (!res.ok) {

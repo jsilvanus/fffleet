@@ -38,4 +38,6 @@ Programmatic use: `import { createWorker } from 'fffleet-worker'`. Pass `executo
 
 `GET /metrics` (Prometheus text format, `metrics` scope or the static token) reports slots, running jobs with their encoding speed and fps, ffmpeg CPU and memory, bytes staged and uploaded, and host load and memory.
 
+See also the [install and use guide](https://github.com/jsilvanus/fffleet/blob/main/docs/getting-started.md) and [security notes](https://github.com/jsilvanus/fffleet/blob/main/docs/security.md).
+
 License: EUPL-1.2
