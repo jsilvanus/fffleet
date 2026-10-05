@@ -1,6 +1,6 @@
 {
   "name": "fffleet",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Run ffmpeg jobs locally, on one worker or across a pool, through one client and one job contract",
   "type": "module",
   "main": "./src/index.js",
