@@ -57,7 +57,8 @@ test('{{inputdir:name}} is the directory holding only that input', () => {
   assert.throws(() => resolvePlaceholders(['{{inputdir:font}}'], { input: {}, output: {} }), /unresolved/);
 });
 
-test('each staged input sits in its own directory, which {{inputdir:name}} resolves to', async () => {
+// The stand-in ffmpeg is a shell script, which Windows cannot run; the placeholder handling is the same everywhere.
+test('each staged input sits in its own directory, which {{inputdir:name}} resolves to', { skip: process.platform === 'win32' && 'needs a POSIX shell script as ffmpeg' }, async () => {
   const fake = join(tmp.dir, 'fake-ffmpeg.sh');
   writeFileSync(fake, '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$FAKE_ARGS"\nfor last; do :; done\n: > "$last"\n');
   chmodSync(fake, 0o755);
