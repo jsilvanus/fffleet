@@ -1,11 +1,26 @@
 #!/usr/bin/env node
+import { isAbsolute, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { s3ConfigFromEnv } from 'fffleet';
 import { createWorker } from '../src/worker.js';
 
 const env = process.env;
 const list = v => (v ? v.split(',').map(s => s.trim()).filter(Boolean) : []);
 
+// Extra job types: FFFLEET_EXECUTORS lists modules (package names or paths) that default-export
+// { type, run(spec, runtime) } or an array of them. Workers with them claim type:<type>.
+const executors = {};
+for (const ref of list(env.FFFLEET_EXECUTORS)) {
+  const specifier = ref.startsWith('.') || isAbsolute(ref) ? pathToFileURL(resolve(ref)).href : ref;
+  const mod = await import(specifier);
+  for (const e of [mod.default].flat()) {
+    if (!e || typeof e.type !== 'string' || typeof e.run !== 'function') throw new Error(`${ref}: default export must be { type, run } or an array of them`);
+    executors[e.type] = e.run;
+  }
+}
+
 const worker = createWorker({
+  executors,
   id: env.FFFLEET_WORKER_ID || undefined,
   port: Number(env.PORT ?? 5100),
   host: env.HOST ?? '0.0.0.0',
