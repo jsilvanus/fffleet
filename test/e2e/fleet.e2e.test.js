@@ -3,7 +3,7 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createFleet } from 'fffleet';
 import { ORCHESTRATOR_BIN, WORKER_BIN, api, averageColor, colorStreamArgs, isBlue, isGreen, isRed, startBin, tempDir, waitFor } from '../helpers/index.js';
 
@@ -57,7 +57,7 @@ test('a batch job runs on a worker and writes its output', async () => {
   assert.ok(['alpha', 'beta'].includes(done.workerId));
   assert.equal(done.outputs.length, 1);
   assert.ok(done.outputs[0].bytes > 0);
-  assert.ok(isRed(await averageColor(new URL(done.outputs[0].uri).pathname)));
+  assert.ok(isRed(await averageColor(fileURLToPath(new URL(done.outputs[0].uri)))));
 });
 
 test('requires routes a job only to a worker with that capability', async () => {
@@ -65,7 +65,7 @@ test('requires routes a job only to a worker with that capability', async () => 
     const done = await (await fleet.submit(frameJob('0x00FF00', { requires: ['site:beta'] }))).done;
     assert.equal(done.state, 'succeeded');
     assert.equal(done.workerId, 'beta');
-    assert.ok(isGreen(await averageColor(new URL(done.outputs[0].uri).pathname)));
+    assert.ok(isGreen(await averageColor(fileURLToPath(new URL(done.outputs[0].uri)))));
   }
 });
 
@@ -117,7 +117,7 @@ test('a worker that dies mid-stream fails its job with WORKER_LOST and the fleet
   const next = await (await fleet.submit(frameJob('0x0000FF'))).done;
   assert.equal(next.state, 'succeeded');
   assert.equal(next.workerId, 'gamma');
-  assert.ok(isBlue(await averageColor(new URL(next.outputs[0].uri).pathname)));
+  assert.ok(isBlue(await averageColor(fileURLToPath(new URL(next.outputs[0].uri)))));
 });
 
 test('with fallback "local" a client runs the job itself when the fleet is unreachable', async () => {
@@ -127,7 +127,7 @@ test('with fallback "local" a client runs the job itself when the fleet is unrea
     assert.equal(job.where, 'local');
     const done = await job.done;
     assert.equal(done.state, 'succeeded');
-    assert.ok(isGreen(await averageColor(new URL(done.outputs[0].uri).pathname)));
+    assert.ok(isGreen(await averageColor(fileURLToPath(new URL(done.outputs[0].uri)))));
   } finally {
     await offline.close();
   }
