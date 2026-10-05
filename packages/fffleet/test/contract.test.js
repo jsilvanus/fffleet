@@ -8,7 +8,7 @@ test('fills in defaults', () => {
   const spec = parseSpec(minimal);
   assert.deepEqual(spec, {
     contract: 1, id: undefined, kind: 'batch', type: 'ffmpeg', class: 'default', priority: 0, owner: '',
-    requires: [], labels: {}, timeoutMs: null, stdin: false, inputs: [], outputs: [],
+    requires: [], labels: {}, timeoutMs: null, stdin: false, stdout: false, inputs: [], outputs: [],
     ffmpeg: { args: ['-version'], durationMs: null },
   });
 });

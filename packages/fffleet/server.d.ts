@@ -41,6 +41,7 @@ export function close(server: Server): Promise<void>;
 export function checkBearer(req: IncomingMessage, token: string | null): boolean;
 export function send(res: ServerResponse, status: number, body: unknown, headers?: Record<string, string>): void;
 export function sendError(res: ServerResponse, err: unknown): void;
+export function getStream(url: string, opts?: { headers?: Record<string, string>; signal?: AbortSignal }): Promise<import('node:http').IncomingMessage>;
 export function readBody(req: IncomingMessage, limit: number): Promise<Buffer>;
 export function readJson(req: IncomingMessage): Promise<unknown>;
 

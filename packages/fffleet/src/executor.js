@@ -85,7 +85,7 @@ export async function runFfmpegJob(spec, rt) {
   rt.signal.throwIfAborted();
 
   const args = [
-    '-hide_banner', '-nostats', '-loglevel', 'warning', '-progress', 'pipe:1',
+    '-hide_banner', '-nostats', '-loglevel', 'warning', ...(spec.stdout ? [] : ['-progress', 'pipe:1']),
     ...(spec.stdin ? [] : ['-nostdin']),
     ...(batch ? ['-y'] : []),
     ...resolvePlaceholders(spec.ffmpeg.args, values),
@@ -232,8 +232,12 @@ function runProcess(cmd, args, spec, rt) {
       rt.progress(progress);
     }, { durationMs: spec.ffmpeg.durationMs });
 
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', parse);
+    if (spec.stdout) {
+      rt.attachStdout?.(child.stdout);
+    } else {
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', parse);
+    }
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', d => {
       tail = (tail + d).slice(-STDERR_TAIL_BYTES);

@@ -126,3 +126,13 @@ test('fallback "none" surfaces the error', async () => {
     await srv.stop();
   }
 });
+
+test('job.stdout() reads ffmpeg output from a local job', async () => {
+  const fleet = createFleet();
+  const job = await fleet.submit({ id: 'stdout-local', kind: 'stream', stdout: true, ffmpeg: { args: ['-f', 'lavfi', '-i', 'anullsrc=r=8000:cl=mono', '-t', '0.25', '-f', 's16le', 'pipe:1'] } });
+  const chunks = [];
+  for await (const c of await job.stdout()) chunks.push(c);
+  assert.equal(Buffer.concat(chunks).length, 4000);
+  assert.equal((await job.done).state, 'succeeded');
+  await fleet.close();
+});

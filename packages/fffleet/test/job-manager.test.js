@@ -211,3 +211,24 @@ test('writeStdin refuses a job without stdin', async () => {
   await assert.rejects(m.writeStdin('x', Buffer.from('a')), { code: 'NO_STDIN', status: 409 });
   await m.close();
 });
+
+test('real ffmpeg: stdout streams raw bytes to a reader, one reader per job', async () => {
+  const m = new JobManager({ workRoot: join(tmp.dir, 'work') });
+  // 0.5 s of 16 kHz mono s16le silence = 16000 bytes.
+  m.submit({ id: 'pcm', kind: 'stream', stdout: true, ffmpeg: { args: ['-f', 'lavfi', '-i', 'anullsrc=r=16000:cl=mono', '-t', '0.5', '-f', 's16le', 'pipe:1'] } });
+  const stream = m.openStdout('pcm');
+  assert.throws(() => m.openStdout('pcm'), { code: 'STDOUT_TAKEN', status: 409 });
+  const chunks = [];
+  for await (const c of stream) chunks.push(c);
+  assert.equal(Buffer.concat(chunks).length, 16000);
+  await until(() => m.get('pcm').state === 'succeeded');
+  assert.throws(() => m.openStdout('nope'), { code: 'NOT_FOUND' });
+  m.submit({ id: 'plain', kind: 'stream', ffmpeg: { args: ['-f', 'lavfi', '-i', 'anullsrc', '-t', '0.1', '-f', 'null', '-'] } });
+  assert.throws(() => m.openStdout('plain'), { code: 'NO_STDOUT', status: 409 });
+  await m.close();
+});
+
+test('stdout is only for stream jobs', () => {
+  const { m } = manager();
+  assert.throws(() => m.submit({ ...fakeSpec('b'), kind: 'batch', stdout: true }), { code: 'INVALID_SPEC' });
+});

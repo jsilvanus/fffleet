@@ -88,6 +88,10 @@ export function validateSpec(input) {
   const stdin = s.stdin ?? false;
   if (typeof stdin !== 'boolean') err('stdin', 'must be a boolean');
 
+  const stdout = s.stdout ?? false;
+  if (typeof stdout !== 'boolean') err('stdout', 'must be a boolean');
+  else if (stdout && s.kind !== 'stream') err('stdout', 'is only allowed for stream jobs');
+
   const requires = s.requires ?? [];
   if (!Array.isArray(requires) || requires.some(r => typeof r !== 'string' || !r)) err('requires', 'must be an array of capability strings');
 
@@ -128,6 +132,7 @@ export function validateSpec(input) {
     labels: { ...labels },
     timeoutMs,
     stdin,
+    stdout,
     inputs,
     outputs,
   };

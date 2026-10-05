@@ -138,7 +138,7 @@ One resource, `/v1/jobs`, served the same way by a worker and by the orchestrato
 - **Ids.** The client picks the id. Submitting the same id and spec again returns the existing job (200), and a different spec under the same id is a conflict (409). A retry or a local fallback can therefore never run a job twice.
 - **Classes and slots.** Every job draws a slot from the pool named by its `class` (`default` unless set). A worker with `FFFLEET_SLOTS=default=2,stream=1` keeps one slot for streams that batch work cannot take.
 - **Placement.** `requires: ['filter:ass', 'font:DejaVu Sans']` sends a job only to workers that report those capabilities. Workers detect `type:ffmpeg`, `ffmpeg:<version>`, `filter:*`, `encoder:*` and `font:*`, and you can add your own with `FFFLEET_CAPABILITIES` (for example `mount:/media`).
-- **Priority** (-1000..1000) orders the queue. **timeoutMs** fails a job that runs too long. **stdin: true** keeps ffmpeg's stdin open for `POST /v1/jobs/:id/stdin`.
+- **Priority** (-1000..1000) orders the queue. **timeoutMs** fails a job that runs too long. **stdin: true** keeps ffmpeg's stdin open for `POST /v1/jobs/:id/stdin`. **stdout: true** (stream jobs) hands ffmpeg's `pipe:1` to `GET /v1/jobs/:id/stdout` (`job.stdout()` in the client): raw audio or video bytes to a consumer, one reader per job. No `-progress` is reported for such a job, and ffmpeg stalls while nobody reads.
 - **Events.** `GET /v1/jobs/:id/events` is a Server-Sent Events stream of `event: job` messages, each with a `seq`. Reconnecting with `Last-Event-ID` resumes after that event. The stream ends with the final event.
 
 | Route | |
@@ -154,6 +154,7 @@ One resource, `/v1/jobs`, served the same way by a worker and by the orchestrato
 | `DELETE /v1/jobs/:id` | Cancels (202). |
 | `GET /v1/jobs/:id/events` | SSE, see above. |
 | `POST /v1/jobs/:id/stdin` | Raw body written to ffmpeg. |
+| `GET /v1/jobs/:id/stdout` | `stdout: true` jobs: ffmpeg's stdout as a binary stream. The orchestrator waits while the job is queued. 409 if taken. |
 | `POST /v1/workers/register` | Orchestrator only, worker token. Also the heartbeat. |
 | `GET /v1/workers`, `POST /v1/workers/:id/drain` | Orchestrator only, `admin` scope. |
 

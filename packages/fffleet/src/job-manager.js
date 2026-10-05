@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { mkdir, rm } from 'node:fs/promises';
 import { availableParallelism, tmpdir } from 'node:os';
@@ -111,6 +112,7 @@ export class JobManager extends EventEmitter {
 
     pruneFinished(this.jobs, this.keepFinished);
     const record = new JobRecord(spec);
+    if (spec.stdout) record.stdoutPipe = new PassThrough();
     this.jobs.set(spec.id, record);
     this.queue.push(record);
     this.queue.sort(byPriority);
@@ -147,6 +149,7 @@ export class JobManager extends EventEmitter {
     if (idx >= 0) {
       this.queue.splice(idx, 1);
       record.push({ state: 'cancelled', error: { code: 'CANCELLED', message: 'cancelled before it started' } });
+      record.stdoutPipe?.end();
       return record.snapshot();
     }
     record.run?.abort.abort(new FleetError('CANCELLED', 'cancelled'));
@@ -162,6 +165,19 @@ export class JobManager extends EventEmitter {
     if (!stdin || record.final) throw new FleetError('NOT_RUNNING', 'job is not running', { status: 409 });
     await new Promise((resolve, reject) => stdin.write(data, err => (err ? reject(err) : resolve())));
     return { bytes: Buffer.byteLength(data) };
+  }
+
+  /**
+   * Opens a stdout job's output as a Readable (one reader per job; it ends when the job does).
+   * Until a reader is attached ffmpeg stalls once the pipe's buffer is full.
+   */
+  openStdout(id) {
+    const record = this.jobs.get(id);
+    if (!record) throw new FleetError('NOT_FOUND', `job ${id} not found`, { status: 404 });
+    if (!record.stdoutPipe) throw new FleetError('NO_STDOUT', 'job was not started with stdout: true', { status: 409 });
+    if (record.stdoutOpened) throw new FleetError('STDOUT_TAKEN', 'stdout already has a reader', { status: 409 });
+    record.stdoutOpened = true;
+    return record.stdoutPipe;
   }
 
   stats() {
@@ -221,6 +237,9 @@ export class JobManager extends EventEmitter {
       attachStdin: s => {
         run.stdin = s;
       },
+      attachStdout: s => {
+        if (record.stdoutPipe) s.pipe(record.stdoutPipe, { end: false });
+      },
       transfer: (direction, scheme, bytes) => {
         if (bytes > 0) this.emit('transfer', { direction, scheme, bytes });
       },
@@ -244,6 +263,7 @@ export class JobManager extends EventEmitter {
         });
       } finally {
         clearTimeout(timer);
+        record.stdoutPipe?.end();
         run.stdin = null;
         run.pid = null;
         this.used[pool]--;

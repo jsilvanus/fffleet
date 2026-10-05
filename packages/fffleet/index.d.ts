@@ -45,6 +45,8 @@ export interface JobSpecInput {
   timeoutMs?: number | null;
   /** Keep ffmpeg's stdin open for writes through the API. */
   stdin?: boolean;
+  /** Stream jobs only: ffmpeg's `pipe:1` is readable through `job.stdout()`. No `-progress` is reported. */
+  stdout?: boolean;
   inputs?: Endpoint[];
   outputs?: Endpoint[];
   ffmpeg?: { args: string[]; durationMs?: number | null };
@@ -141,6 +143,7 @@ export interface ExecutorRuntime {
   setState(state: JobState, extra?: object): void;
   progress(progress: Progress): void;
   attachStdin(stdin: Writable | null): void;
+  attachStdout?(stdout: import('node:stream').Readable): void;
   ffmpegPath?: string;
   fetch?: typeof fetch;
   s3?: S3Client | null;
@@ -217,6 +220,8 @@ export class JobHandle extends EventEmitter {
   readonly done: Promise<JobSnapshot>;
   cancel(): Promise<unknown>;
   write(data: Buffer | string): Promise<{ bytes: number }>;
+  /** ffmpeg's stdout as a Readable (the job must have been submitted with `stdout: true`). */
+  stdout(): Promise<import('node:stream').Readable>;
   on(event: 'event', listener: (event: JobEvent) => void): this;
   on(event: 'state', listener: (state: JobState, event: JobEvent) => void): this;
   on(event: 'progress', listener: (progress: Progress, event: JobEvent) => void): this;
