@@ -10,7 +10,7 @@ import { followJobEvents } from './sse.js';
 
 /**
  * A handle to one submitted job, local or remote.
- * Events: 'event' (every JobEvent), 'state' (state, event), 'progress' (progress, event).
+ * Events: 'event' (every JobEvent), 'state' (state, event), 'progress' (progress, event), 'stderr' (newest ffmpeg stderr lines, event).
  * `done` resolves with the final snapshot whatever the outcome; check `state`.
  */
 export class JobHandle extends EventEmitter {
@@ -22,6 +22,8 @@ export class JobHandle extends EventEmitter {
     this.state = 'queued';
     /** @type {import('./types.js').JobSnapshot | null} */
     this.snapshot = null;
+    /** The newest stderr lines ffmpeg wrote while the job runs (null until it writes any). */
+    this.stderrTail = null;
     let resolve, reject;
     /** @type {Promise<import('./types.js').JobSnapshot>} */
     this.done = new Promise((res, rej) => {
@@ -36,6 +38,10 @@ export class JobHandle extends EventEmitter {
   _event(event) {
     this.emit('event', event);
     if (event.progress) this.emit('progress', event.progress, event);
+    if (event.stderrTail) {
+      this.stderrTail = event.stderrTail;
+      this.emit('stderr', event.stderrTail, event);
+    }
     if (event.state !== this.state) {
       this.state = event.state;
       this.emit('state', event.state, event);

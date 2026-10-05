@@ -44,13 +44,5 @@
   },
   "publishConfig": {
     "access": "public"
-  },
-  "peerDependencies": {
-    "fffleet-worker": "^2.0.0"
-  },
-  "peerDependenciesMeta": {
-    "fffleet-worker": {
-      "optional": true
-    }
   }
 }

@@ -241,6 +241,7 @@ function runProcess(cmd, args, spec, rt) {
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', d => {
       tail = (tail + d).slice(-STDERR_TAIL_BYTES);
+      rt.stderr?.(tail.trim());
     });
     if (child.stdin) {
       child.stdin.on('error', () => {});

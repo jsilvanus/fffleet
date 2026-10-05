@@ -57,10 +57,14 @@ jobs:
       - name: Install ffmpeg
         run: choco install ffmpeg -y --no-progress
       - run: npm ci
+      # Every run on Windows so far ended at the job timeout, so the verbose reporter, a timeout per test
+      # and a forced exit show which test hangs instead of just cancelling the job.
       - name: Unit tests
-        run: npm run test:unit
+        timeout-minutes: 8
+        run: node --test --test-reporter=spec --test-timeout=90000 --test-force-exit "packages/fffleet/test/*.test.js" "packages/fffleet-worker/test/*.test.js" "packages/fffleet-orchestrator/test/*.test.js"
       - name: End-to-end tests
-        run: npm run test:e2e
+        timeout-minutes: 8
+        run: node --test --test-reporter=spec --test-timeout=90000 --test-force-exit --test-concurrency=1 "test/e2e/*.e2e.test.js"
 
   images:
     name: Build ${{ matrix.image }} image

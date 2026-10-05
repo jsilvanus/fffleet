@@ -316,6 +316,7 @@ export function createOrchestrator({
           state: e.state === 'queued' ? job.state : e.state,
           workerId: worker.id,
           ...(e.progress ? { progress: e.progress } : {}),
+          ...(e.stderrTail && !['succeeded', 'failed', 'cancelled'].includes(e.state) ? { stderrTail: e.stderrTail } : {}),
           ...(['succeeded', 'failed', 'cancelled'].includes(e.state)
             ? { exitCode: e.exitCode ?? null, error: e.error, outputs: e.outputs ?? [], stderrTail: e.stderrTail ?? null }
             : {}),

@@ -142,6 +142,8 @@ export interface ExecutorRuntime {
   signal: AbortSignal;
   setState(state: JobState, extra?: object): void;
   progress(progress: Progress): void;
+  /** Reports the newest stderr lines while the job runs (called often; the manager throttles). */
+  stderr?(tail: string): void;
   attachStdin(stdin: Writable | null): void;
   attachStdout?(stdout: import('node:stream').Readable): void;
   ffmpegPath?: string;
@@ -215,6 +217,8 @@ export class JobHandle extends EventEmitter {
   readonly id: string;
   readonly where: 'local' | 'remote';
   state: JobState;
+  /** The newest stderr lines ffmpeg wrote while the job runs (null until it writes any). */
+  stderrTail: string | null;
   snapshot: JobSnapshot | null;
   /** Resolves with the final snapshot whatever the outcome; check `state`. */
   readonly done: Promise<JobSnapshot>;
@@ -227,6 +231,7 @@ export class JobHandle extends EventEmitter {
   on(event: 'event', listener: (event: JobEvent) => void): this;
   on(event: 'state', listener: (state: JobState, event: JobEvent) => void): this;
   on(event: 'progress', listener: (progress: Progress, event: JobEvent) => void): this;
+  on(event: 'stderr', listener: (stderrTail: string, event: JobEvent) => void): this;
   on(event: string | symbol, listener: (...args: any[]) => void): this;
 }
 

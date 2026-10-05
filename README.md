@@ -29,6 +29,8 @@ const result = await job.done; // { state: 'succeeded' | 'failed' | 'cancelled',
 
 ## Running a fleet
 
+For a production setup (secrets, persistent files, restarts, alerts, troubleshooting) see [docs/operations.md](docs/operations.md); for what changed between versions, [docs/upgrading.md](docs/upgrading.md).
+
 ```sh
 FFFLEET_TOKEN=client-secret FFFLEET_WORKER_TOKEN=worker-secret docker compose up --build
 ```

@@ -82,6 +82,7 @@ export class JobRecord {
     if (state === 'running' && !this.startedAt) this.startedAt = now;
     if (fields.workerId !== undefined) this.workerId = fields.workerId;
     if (fields.progress) this.progress = fields.progress;
+    if (fields.stderrTail !== undefined && !isFinal(state)) this.stderrTail = fields.stderrTail;
     this.state = state;
     if (isFinal(state)) {
       this.finishedAt = now;
