@@ -110,6 +110,7 @@ export function createWorker({
     list: () => manager.list(),
     cancel: jobId => manager.cancel(jobId),
     writeStdin: (jobId, data) => manager.writeStdin(jobId, data),
+    openStdout: jobId => manager.openStdout(jobId),
     subscribe: (jobId, after, fn) => manager.subscribe(jobId, after, fn),
     capabilities: () => ({ id, version: VERSION, kinds: manager.kinds, slots: manager.stats().pools, queued: manager.stats().queued, capabilities }),
   };
