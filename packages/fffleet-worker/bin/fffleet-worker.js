@@ -34,6 +34,8 @@ const worker = createWorker({
   keysUrl: env.FFFLEET_KEYS_URL || ((env.FFFLEET_TOKEN || env.FFFLEET_WORKER_TOKEN) && env.FFFLEET_ORCHESTRATOR_URL ? `${env.FFFLEET_ORCHESTRATOR_URL.replace(/\/+$/, '')}/v1/auth/keys` : null),
   workRoot: env.FFFLEET_WORK_DIR || undefined,
   extraCapabilities: list(env.FFFLEET_CAPABILITIES),
+  probe: list(env.FFFLEET_PROBE),
+  probeIntervalMs: Number(env.FFFLEET_PROBE_INTERVAL_MS ?? 30000),
   orchestratorUrl: env.FFFLEET_ORCHESTRATOR_URL || null,
   orchestratorToken: env.FFFLEET_WORKER_TOKEN || null,
   advertiseUrl: env.FFFLEET_ADVERTISE_URL || null,

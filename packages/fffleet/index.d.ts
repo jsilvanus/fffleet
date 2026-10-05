@@ -291,6 +291,22 @@ export function createProgressParser(
 export function detectCapabilities(ffmpegPath?: string): Promise<string[]>;
 export function satisfies(capabilities: Iterable<string>, requires: string[]): boolean;
 
+export interface Probe {
+  host: string;
+  port: number;
+  alias: string | null;
+  /** `net:<host>:<port>`, plus `net:<alias>` or, for a host name without an alias, `net:<host>`. */
+  capabilities: string[];
+}
+/** Parses `[alias=]host:port[,...]`; throws on a malformed entry. */
+export function parseProbes(input: string | string[] | undefined): Probe[];
+export function canConnect(host: string, port: number, timeoutMs?: number): Promise<boolean>;
+/** The `net:` capabilities of the probes that connect right now. */
+export function probeCapabilities(
+  probes: Probe[],
+  opts?: { timeoutMs?: number; connect?: (host: string, port: number, timeoutMs: number) => Promise<boolean> },
+): Promise<string[]>;
+
 export function readSse(
   body: ReadableStream<Uint8Array>,
   onEvent: (msg: { id: string | null; event: string; data: string }) => void,

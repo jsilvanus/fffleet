@@ -15,6 +15,8 @@ docker run -p 5100:5100 -e FFFLEET_TOKEN=secret ghcr.io/jsilvanus/fffleet-worker
 | `FFFLEET_SLOTS` | `default=2` | Slot pools, e.g. `default=2,stream=1`, or `auto` (from the CPU count) / `auto:4` (4 cores per slot). |
 | `FFFLEET_KINDS` | `batch,stream` | Job kinds this worker takes. Others get 422 `UNSUPPORTED_KIND`, and the orchestrator does not send them. |
 | `FFFLEET_CAPABILITIES` | | Extra capabilities, comma separated, e.g. `mount:/media,site:hel1`. |
+| `FFFLEET_PROBE` | | Hosts to test with a TCP connect, comma separated `[alias=]host:port`, e.g. `mediamtx=10.1.2.3:8554,db.internal:5432`. While one connects the worker advertises `net:<host>:<port>`, plus `net:<alias>` (or `net:<host>` for a host name without alias). A job with `requires: ['net:mediamtx']` then only runs where that host is reachable, and a worker that loses it drops out of scheduling by itself. |
+| `FFFLEET_PROBE_INTERVAL_MS` | `30000` | How often the probes run. |
 | `FFFLEET_ORCHESTRATOR_URL` | | Register and heartbeat here. |
 | `FFFLEET_WORKER_TOKEN` | | Token for the orchestrator. |
 | `FFFLEET_ADVERTISE_URL` | listen URL | URL the orchestrator should call this worker on. |
