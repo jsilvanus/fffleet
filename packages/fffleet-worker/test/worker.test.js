@@ -176,3 +176,36 @@ test('a worker with a token needs it for /metrics too; /v1/health stays open', a
     await w.stop();
   }
 });
+
+test('advertises net: capabilities only while a probed host is reachable', async () => {
+  const { createServer } = await import('node:net');
+  const target = createServer(s => s.end());
+  await new Promise(r => target.listen(0, '127.0.0.1', r));
+  const port = target.address().port;
+  const orch = await fakeOrchestrator();
+  const w = createWorker({
+    id: 'w-probe', port: 0, host: '127.0.0.1', workRoot: join(tmp, 'w-probe'),
+    orchestratorUrl: orch.url, heartbeatMs: 30, probe: `mediamtx=127.0.0.1:${port}`, probeIntervalMs: 30,
+  });
+  await w.start();
+  const last = () => orch.calls.at(-1)?.body.capabilities ?? [];
+  try {
+    assert.ok(w.capabilities.includes(`net:127.0.0.1:${port}`) && w.capabilities.includes('net:mediamtx'));
+    assert.ok(last().includes('net:mediamtx'), 'the first registration already carries it');
+
+    await new Promise(r => target.close(r));
+    await until(() => !last().includes('net:mediamtx'));
+    assert.ok(w.capabilities.includes('type:ffmpeg'), 'other capabilities stay');
+
+    await new Promise(r => target.listen(port, '127.0.0.1', r));
+    await until(() => last().includes('net:mediamtx'));
+  } finally {
+    await w.stop();
+    await orch.stop();
+    target.close();
+  }
+});
+
+test('refuses a malformed probe list at creation', () => {
+  assert.throws(() => createWorker({ port: 0, probe: 'not-a-host' }), /probe/);
+});

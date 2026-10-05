@@ -9,6 +9,7 @@ export { runFfmpegJob } from './executor.js';
 export { runFfprobeJob } from './ffprobe.js';
 export { createProgressParser } from './progress.js';
 export { detectCapabilities, satisfies } from './capabilities.js';
+export { canConnect, parseProbes, probeCapabilities } from './probe.js';
 export { readSse, followJobEvents } from './sse.js';
 export { createS3Client, s3ConfigFromEnv, parseS3Uri, contentTypeFor, signV4 } from './s3.js';
 export { SCOPES, hashSecret, verifySecret, generateSecret, createTokenProvider } from './auth.js';

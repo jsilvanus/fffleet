@@ -1,6 +1,6 @@
 import { hostname } from 'node:os';
 import { readFileSync } from 'node:fs';
-import { JobManager, detectCapabilities } from 'fffleet';
+import { JobManager, detectCapabilities, parseProbes, probeCapabilities } from 'fffleet';
 import {
   Registry, close, createApiHandler, createAuthenticator, createRemoteKeySet, createTokenVerifier,
   hostMetrics, jobMetrics, listen, procStats, processMetrics,
@@ -24,6 +24,8 @@ const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.u
  * @param {string} [opts.ffmpegPath]
  * @param {string} [opts.workRoot]
  * @param {string[]} [opts.extraCapabilities]       Added to the detected ones, e.g. 'mount:/data/media'.
+ * @param {string | string[]} [opts.probe]           Hosts to test with a TCP connect, `[alias=]host:port`. While one connects the worker advertises net:<host>:<port> (and net:<alias>).
+ * @param {number} [opts.probeIntervalMs]
  * @param {string | null} [opts.orchestratorUrl]
  * @param {string | null} [opts.orchestratorToken]  Worker token the orchestrator expects.
  * @param {string | null} [opts.advertiseUrl]       URL the orchestrator should call; defaults to the listen URL.
@@ -44,6 +46,8 @@ export function createWorker({
   ffmpegPath = 'ffmpeg',
   workRoot,
   extraCapabilities = [],
+  probe = [],
+  probeIntervalMs = 30000,
   orchestratorUrl = null,
   orchestratorToken = null,
   advertiseUrl = null,
@@ -55,7 +59,19 @@ export function createWorker({
   log = () => {},
 } = {}) {
   const manager = new JobManager({ slots, kinds, ffmpegPath, workRoot, workerId: id, progressIntervalMs, executors, s3, cache });
+  const probes = parseProbes(probe);
+  let baseCapabilities = [];
+  let probed = [];
   let capabilities = [];
+  let probeTimer = null;
+  const rebuild = () => { capabilities = [...new Set([...baseCapabilities, ...probed])].sort(); };
+  async function refreshProbes() {
+    const next = await probeCapabilities(probes);
+    const changed = next.join() !== probed.join();
+    probed = next;
+    rebuild();
+    if (changed) log(`reachable: ${next.join(', ') || 'none of the probed hosts'}`);
+  }
   let server = null;
   let url = null;
   let heartbeat = null;
@@ -150,7 +166,13 @@ export function createWorker({
       // type:ffmpeg and type:ffprobe come from detection, so a machine without ffmpeg does not claim it.
       const types = Object.keys(manager.executors).filter(t => t !== 'ffmpeg' && t !== 'ffprobe').map(t => `type:${t}`);
       const schemes = manager.s3 ? ['scheme:s3'] : [];
-      capabilities = [...new Set([...(await detectCapabilities(ffmpegPath)), ...types, ...schemes, ...extraCapabilities])].sort();
+      baseCapabilities = [...new Set([...(await detectCapabilities(ffmpegPath)), ...types, ...schemes, ...extraCapabilities])];
+      await refreshProbes();
+      if (probes.length) {
+        // The heartbeat carries the capabilities, so a host that becomes (un)reachable is picked up by the orchestrator within a beat.
+        probeTimer = setInterval(() => void refreshProbes().catch(() => {}), probeIntervalMs);
+        probeTimer.unref?.();
+      }
       ({ server, url } = await listen(createApiHandler({ backend, authenticate, metrics: () => registry.render() }), { port, host }));
       log(`fffleet-worker ${id} listening on ${url} with slots ${JSON.stringify(manager.slots)} for ${manager.kinds.join(' and ')} jobs`);
       if (orchestratorUrl) {
@@ -164,6 +186,7 @@ export function createWorker({
     /** Stops taking jobs, cancels running ones and closes the server. */
     async stop() {
       clearInterval(heartbeat);
+      clearInterval(probeTimer);
       await manager.close();
       if (server) await close(server);
     },
