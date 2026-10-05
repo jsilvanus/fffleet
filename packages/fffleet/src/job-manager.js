@@ -224,6 +224,7 @@ export class JobManager extends EventEmitter {
     }
 
     let lastProgressAt = 0;
+    let lastStderrAt = 0;
     const workDir = join(this.workRoot, record.id.replace(/[^A-Za-z0-9._-]/g, '_'));
     const runtime = {
       workDir,
@@ -244,6 +245,16 @@ export class JobManager extends EventEmitter {
         }
         lastProgressAt = now;
         if (!abort.signal.aborted) record.push({ progress: p });
+      },
+      // The newest stderr lines of a running job, so a failing stream job can be diagnosed before it ends.
+      stderr: tail => {
+        const now = Date.now();
+        if (now - lastStderrAt < this.progressIntervalMs) {
+          record.stderrTail = tail;
+          return;
+        }
+        lastStderrAt = now;
+        if (!abort.signal.aborted) record.push({ stderrTail: tail });
       },
       attachStdin: s => {
         run.stdin = s;

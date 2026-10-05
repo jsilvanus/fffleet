@@ -26,6 +26,8 @@ await job.cancel();
 const final = await job.done; // final snapshot: state, error, outputs, exitCode, stderrTail
 ```
 
+While a job runs, `job.on('stderr', tail => ...)` and `job.stderrTail` give ffmpeg's newest stderr lines, which is how you diagnose a stream job that never exits.
+
 `job.where` is `'local'` or `'remote'`. `fleet.capabilities()` reports slots and capabilities.
 
 The job contract, routes and error codes are documented in the [repository README](https://github.com/jsilvanus/fffleet#the-job-contract-v1). The building blocks (`JobManager`, `validateSpec`, `followJobEvents`, …) are exported too. `fffleet/server` holds the HTTP API that the worker and the orchestrator use.

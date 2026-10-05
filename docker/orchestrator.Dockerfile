@@ -11,6 +11,8 @@ COPY packages/fffleet/src packages/fffleet/src
 COPY packages/fffleet-orchestrator/src packages/fffleet-orchestrator/src
 COPY packages/fffleet-orchestrator/bin packages/fffleet-orchestrator/bin
 
+# /data is where a volume goes: signing key, clients file and the job state file.
+RUN mkdir /data && chown node:node /data
 USER node
 ENV NODE_ENV=production \
     PORT=5000 \

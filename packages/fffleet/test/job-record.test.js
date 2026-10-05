@@ -53,3 +53,15 @@ test('pruneFinished drops the oldest finished jobs only', () => {
   pruneFinished(jobs, 1);
   assert.deepEqual([...jobs.keys()], ['live', 'f3']);
 });
+
+test('stderr lines of a running job show in its snapshot and are replaced by the final tail', () => {
+  const record = new JobRecord({ id: 'e1', kind: 'stream', type: 'ffmpeg', class: 'default', owner: 'o', priority: 0, labels: {} });
+  record.push({ state: 'running' });
+  assert.equal(record.snapshot().stderrTail, null);
+  const event = record.push({ stderrTail: 'connection timed out' });
+  assert.equal(event.state, 'running');
+  assert.equal(event.stderrTail, 'connection timed out');
+  assert.equal(record.snapshot().stderrTail, 'connection timed out');
+  record.push({ state: 'failed', exitCode: 1, error: { code: 'FFMPEG_EXIT', message: 'x' }, stderrTail: 'final tail' });
+  assert.equal(record.snapshot().stderrTail, 'final tail');
+});

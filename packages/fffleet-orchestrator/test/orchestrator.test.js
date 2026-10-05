@@ -465,3 +465,21 @@ test('a job that fails to dispatch shows up in fffleet_dispatch_failures_total',
   o.backend.submit(fakeJob('d1'));
   await until(async () => /fffleet_dispatch_failures_total\{worker="w1",reason="unreachable"\} 1/.test(await o.registry.render()));
 });
+
+test('the newest stderr lines of a running job reach the client before the job ends', async () => {
+  const o = await orchestrator();
+  const w = await worker(o, 'a');
+  const fleet = client(o);
+  const job = await fleet.submit(fakeJob('err1'));
+  await until(() => w.controls.has('err1'));
+  const seen = [];
+  job.on('stderr', t => seen.push(t));
+  w.controls.get('err1').rt.stderr('Connection to rtmp://example timed out');
+  await until(() => seen.length > 0);
+  assert.equal(seen[0], 'Connection to rtmp://example timed out');
+  assert.equal(job.stderrTail, seen[0]);
+  assert.equal(o.backend.get('err1').stderrTail, seen[0], 'also in the orchestrator snapshot of the running job');
+  assert.equal(o.backend.get('err1').state, 'running');
+  w.controls.get('err1').release();
+  assert.equal((await job.done).state, 'succeeded');
+});

@@ -241,6 +241,7 @@ function runProcess(cmd, args, spec, rt) {
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', d => {
       tail = (tail + d).slice(-STDERR_TAIL_BYTES);
+      rt.stderr?.(tail.trim());
     });
     if (child.stdin) {
       child.stdin.on('error', () => {});
@@ -248,6 +249,13 @@ function runProcess(cmd, args, spec, rt) {
     }
 
     const onAbort = () => {
+      if (process.platform === 'win32') {
+        // SIGTERM is TerminateProcess here, which stops only the process we started. An ffmpeg started
+        // through a launcher shim (Chocolatey, Scoop) would keep running with our pipes open and the
+        // job would never end, so stop the whole tree.
+        killTree(child);
+        return;
+      }
       child.kill('SIGTERM');
       killTimer = setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS);
       killTimer.unref?.();
@@ -272,4 +280,13 @@ function runProcess(cmd, args, spec, rt) {
       resolve({ exitCode: code ?? (signal ? 128 : 1), stderrTail: tail.trim() || null });
     });
   });
+}
+
+/** Windows: ends a process and everything it started. Falls back to killing just the child. */
+function killTree(child) {
+  try {
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).once('error', () => child.kill());
+  } catch {
+    child.kill();
+  }
 }
