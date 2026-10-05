@@ -6,6 +6,7 @@ export {
 export { JobManager, normalizeSlots, normalizeKinds, autoSlots } from './job-manager.js';
 export { JobRecord, FleetError, byPriority, pruneFinished } from './job-record.js';
 export { runFfmpegJob } from './executor.js';
+export { runFfprobeJob } from './ffprobe.js';
 export { createProgressParser } from './progress.js';
 export { detectCapabilities, satisfies } from './capabilities.js';
 export { readSse, followJobEvents } from './sse.js';

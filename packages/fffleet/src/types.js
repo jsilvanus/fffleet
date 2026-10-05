@@ -41,6 +41,7 @@
  * @property {string} name
  * @property {string} uri
  * @property {number | null} bytes
+ * @property {unknown} [data]   Small result returned inline (an ffprobe job's JSON, `uri: 'inline:'`).
  *
  * @typedef {object} JobEvent
  * @property {string} jobId

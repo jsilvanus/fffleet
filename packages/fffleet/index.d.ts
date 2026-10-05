@@ -50,6 +50,8 @@ export interface JobSpecInput {
   inputs?: Endpoint[];
   outputs?: Endpoint[];
   ffmpeg?: { args: string[]; durationMs?: number | null };
+  /** For `type: 'ffprobe'`: which sections to print (default format and streams). */
+  ffprobe?: { show?: ('format' | 'streams' | 'chapters' | 'programs')[] };
   [section: string]: unknown;
 }
 
@@ -91,6 +93,8 @@ export interface OutputResult {
   name: string;
   uri: string;
   bytes: number | null;
+  /** Small results returned inline instead of written to an endpoint, e.g. an ffprobe job's JSON (`uri: 'inline:'`). */
+  data?: unknown;
 }
 
 export interface JobEvent {
@@ -228,6 +232,7 @@ export function normalizeKinds(kinds?: JobKind[] | string): JobKind[];
 /** Slot pools sized from the CPU count: batch only cores/2, stream only cores, both: default cores/2 plus stream cores/4. */
 export function autoSlots(opts?: { cpus?: number; kinds?: JobKind[]; coresPerSlot?: number }): Record<string, number>;
 export function runFfmpegJob(spec: JobSpec & { id: string }, runtime: ExecutorRuntime): Promise<Required<ExecutorResult>>;
+export function runFfprobeJob(spec: JobSpec & { id: string }, runtime: ExecutorRuntime & { ffprobePath?: string }): Promise<Required<ExecutorResult>>;
 
 export class JobHandle extends EventEmitter {
   readonly id: string;

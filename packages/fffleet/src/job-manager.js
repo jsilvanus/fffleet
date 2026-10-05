@@ -8,6 +8,7 @@ import { KINDS, canonicalJson, implicitRequirements, parseSpec } from './contrac
 import { createInputCache, parseSize } from './input-cache.js';
 import { createS3Client } from './s3.js';
 import { runFfmpegJob } from './executor.js';
+import { runFfprobeJob } from './ffprobe.js';
 import { FleetError, JobRecord, byPriority, pruneFinished } from './job-record.js';
 
 /**
@@ -60,7 +61,7 @@ export class JobManager extends EventEmitter {
     this.maxQueued = maxQueued;
     this.keepFinished = keepFinished;
     this.progressIntervalMs = progressIntervalMs;
-    this.executors = { ffmpeg: runFfmpegJob, ...executors };
+    this.executors = { ffmpeg: runFfmpegJob, ffprobe: runFfprobeJob, ...executors };
     this.workerId = workerId;
     this.fetch = fetchImpl;
     this.cache = cache ? createInputCache({ dir: cache.dir, maxBytes: cache.maxBytes === undefined ? undefined : parseSize(cache.maxBytes) }) : null;
