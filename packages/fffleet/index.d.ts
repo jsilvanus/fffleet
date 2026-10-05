@@ -53,9 +53,25 @@ export interface JobSpecInput {
   [section: string]: unknown;
 }
 
-export interface JobSpec extends Required<Omit<JobSpecInput, 'id' | 'ffmpeg'>> {
+/** A validated spec with every default filled in (what parseSpec returns). */
+export interface JobSpec {
+  contract: 1;
   id?: string;
+  kind: JobKind;
+  type: string;
+  class: string;
+  priority: number;
+  owner: string;
+  requires: string[];
+  labels: Record<string, string>;
+  timeoutMs: number | null;
+  stdin: boolean;
+  stdout: boolean;
+  inputs: Endpoint[];
+  outputs: Endpoint[];
   ffmpeg?: { args: string[]; durationMs: number | null };
+  /** Sections of other executor types, kept as submitted. */
+  [section: string]: unknown;
 }
 
 export interface Progress {
