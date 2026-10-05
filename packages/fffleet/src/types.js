@@ -21,6 +21,7 @@
  * @property {Record<string, string>} labels
  * @property {number | null} timeoutMs
  * @property {boolean} stdin         Keep ffmpeg's stdin open for POST /v1/jobs/:id/stdin.
+ * @property {boolean} stdout        Hand ffmpeg's stdout (`pipe:1`) to GET /v1/jobs/:id/stdout. Stream jobs only; no `-progress` is reported then.
  * @property {Endpoint[]} inputs
  * @property {Endpoint[]} outputs
  * @property {{ args: string[], durationMs: number | null }} [ffmpeg]

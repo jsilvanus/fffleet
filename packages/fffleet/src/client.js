@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { getStream } from './http-stream.js';
 import { EventEmitter } from 'node:events';
 import { isFinal, parseSpec } from './contract.js';
 import { detectCapabilities } from './capabilities.js';
@@ -44,6 +45,19 @@ export class JobHandle extends EventEmitter {
   /** Cancels or stops the job. */
   cancel() {
     return this._cancel();
+  }
+
+  /**
+   * Opens ffmpeg's stdout (spec.stdout must be true) as a Readable. One reader per job; it ends with the job.
+   * @returns {Promise<import('node:stream').Readable>}
+   */
+  stdout() {
+    return this._stdout();
+  }
+
+  /** Closes the job's stdin (EOF for ffmpeg), after the last write. */
+  endStdin() {
+    return this._endStdin();
   }
 
   /** Writes to the job's stdin (spec.stdin must be true). */
@@ -104,6 +118,8 @@ export function createFleet({ url, token, clientId, clientSecret, scope, fallbac
     const handle = new JobHandle(job.id, 'local');
     handle._cancel = async () => m.cancel(job.id);
     handle._write = data => m.writeStdin(job.id, data);
+    handle._endStdin = () => m.closeStdin(job.id);
+    handle._stdout = async () => m.openStdout(job.id);
     m.subscribe(job.id, 0, event => {
       handle._event(event);
       if (isFinal(event.state)) {
@@ -123,6 +139,8 @@ export function createFleet({ url, token, clientId, clientSecret, scope, fallbac
     const enc = encodeURIComponent(job.id);
     handle._cancel = () => request('DELETE', `/v1/jobs/${enc}`);
     handle._write = data => request('POST', `/v1/jobs/${enc}/stdin`, data, { 'content-type': 'application/octet-stream' });
+    handle._endStdin = () => request('POST', `/v1/jobs/${enc}/stdin/close`);
+    handle._stdout = async () => getStream(`${base}/v1/jobs/${enc}/stdout`, { headers: await authHeaders(), signal: ac.signal });
     followJobEvents({ url: `${base}/v1/jobs/${enc}/events`, headers: authHeaders, signal: ac.signal, fetch: f, onEvent: e => handle._event(e) })
       .then(async () => {
         handle.snapshot = await request('GET', `/v1/jobs/${enc}`).catch(() => handle.snapshot);

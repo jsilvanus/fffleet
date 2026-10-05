@@ -126,3 +126,30 @@ test('fallback "none" surfaces the error', async () => {
     await srv.stop();
   }
 });
+
+test('job.stdout() reads ffmpeg output from a local job', async () => {
+  const fleet = createFleet();
+  const job = await fleet.submit({ id: 'stdout-local', kind: 'stream', stdout: true, ffmpeg: { args: ['-f', 'lavfi', '-i', 'anullsrc=r=8000:cl=mono', '-t', '0.25', '-f', 's16le', 'pipe:1'] } });
+  const chunks = [];
+  for await (const c of await job.stdout()) chunks.push(c);
+  assert.equal(Buffer.concat(chunks).length, 4000);
+  assert.equal((await job.done).state, 'succeeded');
+  await fleet.close();
+});
+
+test('stdin in, stdout out, endStdin gives ffmpeg EOF', async () => {
+  const fleet = createFleet();
+  // Two seconds of a raw tone-less PCM block in, the same bytes out through ffmpeg.
+  const job = await fleet.submit({ id: 'stdio-local', kind: 'stream', stdin: true, stdout: true, ffmpeg: { args: ['-f', 's16le', '-ar', '8000', '-ac', '1', '-i', 'pipe:0', '-f', 's16le', 'pipe:1'] } });
+  const reading = (async () => {
+    const chunks = [];
+    for await (const c of await job.stdout()) chunks.push(c);
+    return Buffer.concat(chunks).length;
+  })();
+  await until(() => job.state === 'running');
+  await job.write(Buffer.alloc(8000));
+  await job.endStdin();
+  assert.equal(await reading, 8000);
+  assert.equal((await job.done).state, 'succeeded');
+  await fleet.close();
+});

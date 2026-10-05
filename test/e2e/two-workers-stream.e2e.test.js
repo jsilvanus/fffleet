@@ -135,3 +135,11 @@ test('the workers answer the same job API directly', async () => {
     assert.ok(list.body.jobs.every(j => j.state === 'cancelled'), 'worker records the cancelled streams');
   }
 });
+
+test('stdout of a stream job is relayed through the orchestrator', async () => {
+  const job = await fleet.submit({ id: 'pcm-stdout', kind: 'stream', class: 'stream', stdout: true, ffmpeg: { args: ['-f', 'lavfi', '-i', 'anullsrc=r=16000:cl=mono', '-t', '1', '-f', 's16le', 'pipe:1'] } });
+  const chunks = [];
+  for await (const c of await job.stdout()) chunks.push(c);
+  assert.equal(Buffer.concat(chunks).length, 32000);
+  assert.equal((await job.done).state, 'succeeded');
+});
