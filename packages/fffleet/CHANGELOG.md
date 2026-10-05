@@ -1,5 +1,11 @@
 # fffleet
 
+## 2.1.1
+
+### Patch Changes
+
+- 4188305: Type fix: `parseSpec()` and the other places that return a `JobSpec` now have `kind`, `type`, `class` and the other filled-in fields typed properly (they came out as `unknown`). CI now compiles a small consumer against the declarations and checks they list every runtime export.
+
 ## 2.1.0
 
 ### Minor Changes
