@@ -36,4 +36,6 @@ Extra routes: `GET /v1/pools` lists the autoscaling pools. `GET /v1/workers` lis
 
 Keep the file on a volume that survives the container. Use one orchestrator per state file.
 
+See also the [install and use guide](https://github.com/jsilvanus/fffleet/blob/main/docs/getting-started.md), the [architecture](https://github.com/jsilvanus/fffleet/blob/main/docs/architecture.md) and [security notes](https://github.com/jsilvanus/fffleet/blob/main/docs/security.md).
+
 License: EUPL-1.2

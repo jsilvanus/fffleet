@@ -174,6 +174,9 @@ export function createWorker({
         probeTimer.unref?.();
       }
       ({ server, url } = await listen(createApiHandler({ backend, authenticate, metrics: () => registry.render() }), { port, host }));
+      if (!token && !keysUrl && !['127.0.0.1', '::1', 'localhost'].includes(host)) {
+        log('no FFFLEET_TOKEN or FFFLEET_WORKER_TOKEN: anyone who can reach this port can run ffmpeg as this user (docs/security.md)');
+      }
       log(`fffleet-worker ${id} listening on ${url} with slots ${JSON.stringify(manager.slots)} for ${manager.kinds.join(' and ')} jobs`);
       if (orchestratorUrl) {
         await register().catch(err => log(`first registration failed, retrying: ${err.message}`));

@@ -153,3 +153,19 @@ test('stdin in, stdout out, endStdin gives ffmpeg EOF', async () => {
   assert.equal((await job.done).state, 'succeeded');
   await fleet.close();
 });
+
+test('a proxy error page is reported by its status, not as a JSON failure', async () => {
+  const { createServer } = await import('node:http');
+  const html = status => new Promise(resolve => {
+    const server = createServer((req, res) => { res.writeHead(status, { 'content-type': 'text/html' }); res.end('<html>nope</html>'); });
+    server.listen(0, '127.0.0.1', () => resolve(server));
+  });
+  const proxy401 = await html(401);
+  try {
+    const fleet = createFleet({ url: `http://127.0.0.1:${proxy401.address().port}`, token: 'x' });
+    // A 401 is never a reason to run the job here instead.
+    await assert.rejects(fleet.submit(fakeSpec('html401')), { code: 'HTTP_ERROR', status: 401 });
+  } finally {
+    proxy401.close();
+  }
+});
