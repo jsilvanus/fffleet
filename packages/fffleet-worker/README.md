@@ -34,6 +34,20 @@ The worker detects `type:ffmpeg`, `ffmpeg:<version>`, `filter:*`, `encoder:*` an
 
 The Docker image is Debian's ffmpeg build, with x264, x265, vpx, aom, lame, opus, libass and freetype, plus DejaVu fonts.
 
+## Download jobs (yt-dlp)
+
+`FFFLEET_EXECUTORS=fffleet-worker/executors/download` (or the `fffleet-worker-ytdlp` image, which has it and yt-dlp) adds job type `download`; the worker then claims `type:download`. `YTDLP_PATH` overrides the yt-dlp binary.
+
+```js
+{ type: 'download',
+  download: { url: 'https://…', format: 'bv*+ba/b', extraArgs: ['--limit-rate', '5M'] },  // url must be http(s)
+  inputs:  [{ name: 'cookies', uri: 's3://bucket/tmp/cookies.txt' }],   // optional Netscape cookies.txt
+  outputs: [{ name: 'video', uri: 's3://bucket/out/video.mp4' },
+            { name: 'cookies-out', uri: 's3://bucket/tmp/cookies-out.txt' }] }  // optional
+```
+
+**Credentials are a cookies.txt passed as an input**, so they travel like any other file (`s3:`, `http(s):` or `file:`) and never appear in the job spec, logs or errors. Stage the cookie file in a private object, and delete it when the job ends. yt-dlp rewrites its cookie file, so the executor works on a copy in the job's work directory; `cookies-out` is uploaded only when yt-dlp changed it, so you can store the refreshed cookies. `extraArgs` refuses options that run commands or touch other files (`--exec`, `--output`, `--cookies`, config and plugin options). Progress comes from yt-dlp's percentages and cancelling the job stops yt-dlp.
+
 Programmatic use: `import { createWorker } from 'fffleet-worker'`. Pass `executors` to add job types other than ffmpeg.
 
 `GET /metrics` (Prometheus text format, `metrics` scope or the static token) reports slots, running jobs with their encoding speed and fps, ffmpeg CPU and memory, bytes staged and uploaded, and host load and memory.

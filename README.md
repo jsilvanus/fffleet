@@ -5,7 +5,7 @@
 | Package | What it is |
 |---|---|
 | [`fffleet`](packages/fffleet) | The client library, the job contract and the local runner. No dependencies. |
-| [`fffleet-worker`](packages/fffleet-worker) | A daemon that runs jobs on one machine and serves the job API. Docker image `ghcr.io/jsilvanus/fffleet-worker`. |
+| [`fffleet-worker`](packages/fffleet-worker) | A daemon that runs jobs on one machine and serves the job API. Docker image `ghcr.io/jsilvanus/fffleet-worker` (`fffleet-worker-ytdlp` adds yt-dlp `download` jobs). |
 | [`fffleet-orchestrator`](packages/fffleet-orchestrator) | Queues jobs and spreads them over registered workers. Docker image `ghcr.io/jsilvanus/fffleet-orchestrator`. |
 
 An application only ever depends on `fffleet`. Where jobs run is configuration:
