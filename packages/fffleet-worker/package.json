@@ -6,7 +6,8 @@
   "main": "./src/worker.js",
   "exports": {
     ".": "./src/worker.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./executors/download": "./src/executors/download.js"
   },
   "bin": {
     "fffleet-worker": "bin/fffleet-worker.js"
