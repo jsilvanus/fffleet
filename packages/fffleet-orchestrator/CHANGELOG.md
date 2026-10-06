@@ -1,5 +1,12 @@
 # fffleet-orchestrator
 
+## 2.4.0
+
+### Patch Changes
+
+- Updated dependencies [f6a6602]
+  - fffleet@2.4.0
+
 ## 2.3.1
 
 ### Patch Changes
