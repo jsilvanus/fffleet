@@ -62,7 +62,9 @@ beforeEach(async () => {
   await writeFile(path.join(bucketDir, 'b/in/cookies.txt'), COOKIES);
 });
 
-describe('download executor', () => {
+// The stand-in yt-dlp is a POSIX script; Windows cannot spawn it without a shell, and the executor never uses one.
+// Workers that run downloads are Linux (docker/worker-ytdlp.Dockerfile). Payload and scrub tests below run everywhere.
+describe('download executor', { skip: process.platform === 'win32' && 'needs a POSIX yt-dlp stub' }, () => {
   test('is a download-type executor', () => {
     assert.equal(executor.type, 'download');
     assert.equal(typeof executor.run, 'function');
