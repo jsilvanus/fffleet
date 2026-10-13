@@ -161,10 +161,12 @@ async function poll() {
 $('login-form').addEventListener('submit', async event => {
   event.preventDefault();
   $('login-error').textContent = '';
-  const form = new FormData(event.currentTarget);
+  // Keep the element: event.currentTarget is cleared once the handler yields at the await.
+  const formEl = event.currentTarget;
+  const form = new FormData(formEl);
   try {
     await login(form);
-    event.currentTarget.reset();
+    formEl.reset();
     enterDashboard();
   } catch (err) {
     $('login-error').textContent = err.message;
