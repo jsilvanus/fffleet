@@ -1,5 +1,12 @@
 # fffleet-orchestrator
 
+## 2.5.1
+
+### Patch Changes
+
+- 6c3680c: The orchestrator Docker image now includes the dashboard files, so `/ui/` is served from the image (it was missing from 2.5.0).
+  - fffleet@2.5.1
+
 ## 2.5.0
 
 ### Minor Changes
