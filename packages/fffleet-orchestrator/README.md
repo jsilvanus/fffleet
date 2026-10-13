@@ -39,3 +39,7 @@ Keep the file on a volume that survives the container. Use one orchestrator per 
 See also the [install and use guide](https://github.com/jsilvanus/fffleet/blob/main/docs/getting-started.md), the [architecture](https://github.com/jsilvanus/fffleet/blob/main/docs/architecture.md) and [security notes](https://github.com/jsilvanus/fffleet/blob/main/docs/security.md).
 
 License: EUPL-1.2
+
+## Dashboard
+
+The orchestrator serves a small dashboard at `/ui/` (set `ui: false` in the library options to turn it off). It has no build step and no data of its own: the page asks you to log in with a client that has the `admin` scope, gets a token from `POST /v1/auth/token`, and then polls `GET /v1/workers` and `GET /v1/jobs` once a second. It shows the number of nodes (distinct worker hosts), workers, slots in use, running and queued jobs, the worker kinds (batch, stream) and pools, and the running jobs. The token is kept in `sessionStorage` only, so it ends with the tab.
