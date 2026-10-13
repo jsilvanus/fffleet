@@ -1,5 +1,16 @@
 # fffleet-orchestrator
 
+## 2.5.0
+
+### Minor Changes
+
+- 300f3a2: Add a small dashboard at `/ui/`: log in with a client, then see nodes, workers, worker kinds and running jobs, refreshed every second. Turn it off with `ui: false`.
+
+### Patch Changes
+
+- 33539fc: Fix the dashboard login form: it threw "Cannot read properties of null (reading 'reset')" after a successful login, so the dashboard did not open.
+  - fffleet@2.5.0
+
 ## 2.4.0
 
 ### Patch Changes
