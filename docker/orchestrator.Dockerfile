@@ -10,6 +10,8 @@ RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY packages/fffleet/src packages/fffleet/src
 COPY packages/fffleet-orchestrator/src packages/fffleet-orchestrator/src
 COPY packages/fffleet-orchestrator/bin packages/fffleet-orchestrator/bin
+# The dashboard at /ui/ is static files served from here (ui.js reads ../ui).
+COPY packages/fffleet-orchestrator/ui packages/fffleet-orchestrator/ui
 
 # /data is where a volume goes: signing key, clients file and the job state file.
 RUN mkdir /data && chown node:node /data
