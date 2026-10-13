@@ -1,5 +1,11 @@
 # fffleet-worker
 
+## 2.5.1
+
+### Patch Changes
+
+- fffleet@2.5.1
+
 ## 2.5.0
 
 ### Patch Changes
