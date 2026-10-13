@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createAutoscaler } from './autoscaler.js';
 import { createProviders } from './providers/index.js';
 import { openSqliteJobStore } from './job-store.js';
+import { serveUi } from './ui.js';
 import { randomUUID } from 'node:crypto';
 import { FleetError, JobRecord, byPriority, canonicalJson, followJobEvents, implicitRequirements, normalizeKinds, normalizeSlots, parseSpec, pruneFinished, satisfies } from 'fffleet';
 import {
@@ -43,6 +44,7 @@ const REDISPATCH_DELAY_MS = 500;
  * @param {{ save(job: JobRecord): void, loadAll(): object[], prune(keep: number): void, close(): void } | null} [opts.store]  A job store of your own, instead of `stateFile`.
  * @param {number} [opts.adoptGraceMs]          After a restart, how long a running job waits for its worker to report it.
  * @param {number} [opts.dispatchCooldownMs]    How long a worker that answered a dispatch with 5xx gets no new jobs.
+ * @param {boolean} [opts.ui=true]              Serve the dashboard at /ui/ (static files; the data needs a token).
  * @param {(msg: string) => void} [opts.log]
  */
 export function createOrchestrator({
@@ -66,6 +68,7 @@ export function createOrchestrator({
   stateFile = null,
   store = null,
   adoptGraceMs = 30000,
+  ui = true,
   log = () => {},
 } = {}) {
   /** @type {Map<string, Worker>} */
@@ -542,6 +545,7 @@ export function createOrchestrator({
 
   async function extraRoutes(req, res, reqUrl, who) {
     const path = reqUrl.pathname;
+    if (ui && (await serveUi(req, res, path))) return true;
     if (path === '/v1/auth/token' && req.method === 'POST') {
       const raw = (await readBody(req, 64 * 1024)).toString('utf8');
       const json = (req.headers['content-type'] ?? '').includes('application/json');

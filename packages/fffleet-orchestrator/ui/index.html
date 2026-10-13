@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fffleet orchestrator</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <strong>fffleet</strong> <span class="muted">orchestrator</span>
+    <button id="logout" type="button" hidden>Log out</button>
+  </header>
+
+  <main>
+    <section id="login" hidden>
+      <h1>Log in</h1>
+      <form id="login-form" autocomplete="off">
+        <label>Client id <input name="client_id" required autocomplete="username"></label>
+        <label>Client secret <input name="client_secret" type="password" required autocomplete="current-password"></label>
+        <button type="submit">Log in</button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+    </section>
+
+    <section id="dashboard" hidden>
+      <p id="notice" class="notice" hidden></p>
+
+      <div class="stats">
+        <div class="stat"><span class="label">Nodes</span><span id="s-nodes" class="value">–</span></div>
+        <div class="stat"><span class="label">Workers</span><span id="s-workers" class="value">–</span></div>
+        <div class="stat"><span class="label">Slots used</span><span id="s-slots" class="value">–</span></div>
+        <div class="stat"><span class="label">Running</span><span id="s-running" class="value">–</span></div>
+        <div class="stat"><span class="label">Queued</span><span id="s-queued" class="value">–</span></div>
+      </div>
+
+      <h2>Worker kinds</h2>
+      <table>
+        <thead><tr><th>Kind</th><th>Workers</th><th>Slots</th><th>Used</th></tr></thead>
+        <tbody id="kinds"></tbody>
+      </table>
+      <p class="muted" id="pools"></p>
+
+      <h2>Running</h2>
+      <table>
+        <thead><tr><th>Job</th><th>Kind</th><th>Type</th><th>Class</th><th>Worker</th><th>State</th><th>Progress</th></tr></thead>
+        <tbody id="running"></tbody>
+      </table>
+      <p class="muted" id="empty" hidden>No jobs are running.</p>
+      <p class="muted">Updated <span id="updated">–</span>, every second.</p>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
