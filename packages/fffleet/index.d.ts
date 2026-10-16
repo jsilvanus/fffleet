@@ -231,6 +231,23 @@ export function parseSize(value: number | string): number;
 export function normalizeKinds(kinds?: JobKind[] | string): JobKind[];
 /** Slot pools sized from the CPU count: batch only cores/2, stream only cores, both: default cores/2 plus stream cores/4. */
 export function autoSlots(opts?: { cpus?: number; kinds?: JobKind[]; coresPerSlot?: number }): Record<string, number>;
+/** Run a command in a disposable, network-isolated Podman (preferred) or Docker container. Requires a tmpfs workDir and an image with /bin/sh, sleep, find and tar. */
+export function runIsolatedCommand(opts: {
+  runtime?: 'podman' | 'docker';
+  image: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  workDir: string;
+  signal?: AbortSignal;
+  user?: string;
+  limits?: { memory?: string; cpus?: number; pids?: number; workSize?: string; tmpSize?: string };
+  onOutput?: (line: string) => void;
+  /** Disable only for controlled tests; production must leave tmpfs enforcement enabled. */
+  requireTmpfs?: boolean;
+}): Promise<{ exitCode: number; stderrTail: string | null; outputs: string[] }>;
+/** True only when the path is on a Linux tmpfs filesystem; unsupported filesystems return false. */
+export function isTmpfs(path: string): Promise<boolean>;
 export function runFfmpegJob(spec: JobSpec & { id: string }, runtime: ExecutorRuntime): Promise<Required<ExecutorResult>>;
 export function runFfprobeJob(spec: JobSpec & { id: string }, runtime: ExecutorRuntime & { ffprobePath?: string }): Promise<Required<ExecutorResult>>;
 
