@@ -30,7 +30,7 @@ Important limits:
 
 - The caller must authorize and stage inputs, choose trusted/pinned images and commands, and publish or upload outputs. The helper does not grant tenant-scoped S3 access or provide checkpoint semantics.
 - Only regular files are transferred; symlinks and special files are excluded. The image needs `/bin/sh`, `sleep`, `find` and GNU `tar`.
-- CI has a Podman integration test for basic execution, file transfer, tmpfs enforcement and symlink exclusion. Cancellation, resource-limit enforcement, transfer-size exhaustion and cleanup during runtime failures still need more coverage. Do not treat the helper as production-certified until those cases are tested.
+- CI has a Podman integration test for basic execution, file transfer, tmpfs/no-swap enforcement and symlink exclusion. Cancellation, resource-limit enforcement, transfer-size exhaustion and cleanup during runtime failures still need more coverage. Do not treat the helper as production-certified until those cases are tested.
 - Rootless Podman is preferred. Docker's daemon remains a high-privilege boundary, and neither runtime prevents kernel/runtime vulnerabilities.
 
 Ordinary jobs remain unsandboxed unless an integrating application explicitly routes them through this helper in a trusted custom executor. Do not infer isolation from a worker merely running in a container.
