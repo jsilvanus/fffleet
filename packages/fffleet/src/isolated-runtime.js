@@ -99,7 +99,7 @@ export async function runIsolatedCommand({
   };
   try {
     signal?.throwIfAborted();
-    await runTool(runtime, createArgs, { signal, onStdout: output, onStderr: output });
+    await runTool(runtime, createArgs, { signal });
     created = true;
     await runTool(runtime, ['exec', name, 'mkdir', '-p', '/work/in', '/work/out'], { signal, onStdout: output, onStderr: output });
 
