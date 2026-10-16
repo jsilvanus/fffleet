@@ -55,8 +55,9 @@ export async function runIsolatedCommand({
     }
   }
 
+  if (typeof workDir !== 'string' || !workDir.trim()) throw new Error('an absolute workDir is required');
   const root = resolve(workDir);
-  if (!workDir || !isAbsolute(root)) throw new Error('an absolute workDir is required');
+  if (!isAbsolute(root)) throw new Error('an absolute workDir is required');
   await mkdir(root, { recursive: true });
   if (requireTmpfs && !(await isTmpfs(root))) {
     throw new Error('isolated execution refused: workDir is not on tmpfs; set FFFLEET_WORK_DIR to a memory-backed filesystem');
@@ -152,8 +153,19 @@ async function checkedChildDir(root, name) {
 }
 
 async function listRelativeFiles(root) {
-  const { stdout } = await captureTool('find', ['.', '-type', 'f', '-print'], { cwd: root });
-  return stdout.split('\n').map(s => s.trim()).filter(Boolean).map(s => s.replace(/^\.\//, ''));
+  const files = [];
+  async function walk(dir, prefix = '') {
+    const { readdir, lstat } = await import('node:fs/promises');
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const full = resolve(dir, entry.name);
+      if (entry.isDirectory()) await walk(full, rel);
+      else if (entry.isFile() && (await lstat(full)).isFile()) files.push(rel);
+      // Symlinks and special files are intentionally not returned.
+    }
+  }
+  await walk(root);
+  return files.sort();
 }
 
 function captureTool(command, args, { cwd, signal } = {}) {
@@ -195,8 +207,7 @@ async function transferIntoContainer(runtime, name, inputDir, signal, onOutput) 
   }
   const statuses = [wait(find), wait(pack), wait(unpack)];
   try {
-    await pipeline(find.stdout, pack.stdin);
-    await pipeline(pack.stdout, unpack.stdin);
+    await Promise.all([pipeline(find.stdout, pack.stdin), pipeline(pack.stdout, unpack.stdin)]);
     const codes = await Promise.all(statuses);
     if (codes.some(code => code !== 0)) throw new Error(`input transfer failed: ${errors.join('').slice(-1000)}`);
   } catch (err) {
@@ -208,7 +219,7 @@ async function transferIntoContainer(runtime, name, inputDir, signal, onOutput) 
 async function transferOutOfContainer(runtime, name, outputDir, signal, onOutput) {
   const exportScript = 'cd /work/out && find . -type f -print0 | tar --null -T - -cf -';
   const pack = spawn(runtime, ['exec', name, '/bin/sh', '-c', exportScript], { stdio: ['ignore', 'pipe', 'pipe'], signal });
-  const unpack = spawn('tar', ['-xf', '-', '-C', outputDir], { stdio: ['pipe', 'ignore', 'pipe'], signal });
+  const unpack = spawn('tar', ['--no-same-owner', '--no-same-permissions', '-xf', '-', '-C', outputDir], { stdio: ['pipe', 'ignore', 'pipe'], signal });
   const errors = [];
   for (const child of [pack, unpack]) child.stderr.on('data', chunk => { errors.push(chunk.toString()); onOutput(chunk.toString().trimEnd()); });
   const statuses = [wait(pack), wait(unpack)];
