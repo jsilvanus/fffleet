@@ -47,9 +47,9 @@ Use `validateSpec(spec)` from `fffleet` in your own tests to check specs without
 
 ## Idempotency and retries
 
-The server remembers a job by id. Submitting the same id with an identical spec returns the existing job (200) and never starts it twice; a different spec under the same id is `409 ID_CONFLICT`. So:
+The server remembers a job by id while its record is retained. Submitting the same id with an identical spec returns the existing job (200) instead of accepting it again; a different spec under the same id is `409 ID_CONFLICT`. This is not a global exactly-once guarantee: records can be pruned, an orchestrator without `FFFLEET_STATE_FILE` forgets them on restart, and local fallback after an ambiguous remote submission can execute the same work twice. So:
 
-- **Derive ids from your own entity**, e.g. `render-<projectId>-<revision>`. A crashed app that resubmits after restart reattaches to the running job instead of duplicating it.
+- **Derive ids from your own entity**, e.g. `render-<projectId>-<revision>`. A crashed app can reattach to a retained job after restart only if the orchestrator's job state is persistent (`FFFLEET_STATE_FILE` or a custom store) and the record has not been pruned.
 - To rerun a finished job, change the id (add an attempt counter). A finished job is remembered for status until it falls out of the newest 1000.
 - Ids are one namespace for the whole orchestrator, not per app. Two apps picking the same id see a 409 even though they cannot see each other's jobs; prefix ids with your app's name.
 
