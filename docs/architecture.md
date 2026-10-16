@@ -62,13 +62,14 @@ Capabilities are plain strings. A worker reports what it detects (`type:ffmpeg`,
 |---|---|
 | Worker stops sending heartbeats (`FFFLEET_HEARTBEAT_TIMEOUT_MS`, 15 s) | Dropped; its unfinished jobs fail with `WORKER_LOST`. |
 | Heartbeat no longer lists a dispatched job (worker restarted) | That job fails with `WORKER_LOST` after a short grace (`lostJobGraceMs`, 10 s). |
-| Worker answers a dispatch with 5xx | No new jobs for `dispatchCooldownMs` (5 s); the job goes back to the queue. |
-| Worker unreachable on dispatch | The worker is dropped until it re-registers; the job goes back to the queue. |
+| Worker answers a dispatch with 5xx | No new jobs for `dispatchCooldownMs` (5 s); the job goes back to the queue. If the worker started the job before its error response, execution may be duplicated on another worker. |
+| Worker unreachable on dispatch | The worker is dropped until it re-registers; the job goes back to the queue. If the worker accepted the job but the response was lost, it may keep running while another worker receives the requeued job. |
 | Worker answers a dispatch with 4xx | The job fails with `DISPATCH_REJECTED`. |
 | Orchestrator restarts, **with** `FFFLEET_STATE_FILE` | Queued jobs return to the queue; running batch jobs are adopted when their worker reports them (or fail with `ORCHESTRATOR_RESTARTED` after `FFFLEET_ADOPT_GRACE_MS`); running stream jobs fail. |
 | Orchestrator restarts, without a state file | All jobs are forgotten; workers finish what they run, unobserved. |
 | Fleet unreachable (client) | With `fallback: 'local'` (default) the job runs in the app's process. See the caveat in [security.md](security.md#known-limitations). |
 | Event stream drops (client) | Reconnects with `Last-Event-ID` and resumes after the last event it saw; up to 5 consecutive failures. |
+| Cancellation cannot reach a worker | The orchestrator records `cancelled` and releases the slot, but the remote process may continue. Treat cancellation as best-effort if the worker is unreachable. |
 
 Event history per job is capped (500 events, always keeping the first and the final one). Finished jobs are remembered for status and idempotency (the newest 1000).
 
