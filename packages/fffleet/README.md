@@ -50,7 +50,7 @@ const result = await runIsolatedCommand({
 });
 ```
 
-The worker's `FFFLEET_WORK_DIR` must point to Linux tmpfs (for example, under `/dev/shm`); the helper refuses non-tmpfs scratch by default. The image must include `/bin/sh`, `sleep`, `find` and GNU `tar`. The caller must stage inputs through trusted, authorized code and handle output upload/publication itself. This is a low-level opt-in primitive, **not** automatic isolation for ordinary FFmpeg jobs, a tenant authorization system, or a guarantee against container-runtime/kernel vulnerabilities. Prefer rootless Podman.
+The worker's `FFFLEET_WORK_DIR` must point to Linux tmpfs (for example, under `/dev/shm`) on a host with swap disabled; the helper refuses non-tmpfs scratch and active/unverifiable host swap by default. The image must include `/bin/sh`, `sleep`, `find` and GNU `tar`. The caller must stage inputs through trusted, authorized code and handle output upload/publication itself. This is a low-level opt-in primitive, **not** automatic isolation for ordinary FFmpeg jobs, a tenant authorization system, or a guarantee against container-runtime/kernel vulnerabilities. Prefer rootless Podman.
 
 See also the [integration guide](https://github.com/jsilvanus/fffleet/blob/main/docs/integration-guide.md).
 
