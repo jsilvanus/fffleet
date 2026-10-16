@@ -182,7 +182,7 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
     for (const job of view.queue()) {
       if (job.waitedMs < autoscale.scaleUpAfter) continue;
       for (const pool of pools.values()) {
-        if (!canServe(pool, job.spec) || t < pool.backoffUntil) continue;
+        if (pendingDiscovery.has(pool.name) || !canServe(pool, job.spec) || t < pool.backoffUntil) continue;
         const coverage = (count(pool, 'creating', 'booting') + planned.get(pool.name)) * slotsPerWorker(pool);
         if (assigned.get(pool.name) < coverage) {
           assigned.set(pool.name, assigned.get(pool.name) + 1);
