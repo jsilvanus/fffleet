@@ -65,3 +65,28 @@ For isolated execution, keep transfer credentials and policy in trusted consumer
 ## Deliberately not specified yet
 
 This document does not select a specific S3 vendor, bucket naming convention, incremental snapshot algorithm, checkpoint interval, or exact API. Those are owned by the integrating application and should be selected after storage sizing and failure/recovery requirements are measured. It does not establish a fffleet workspace/session API or place the extended worker in this repository; only the generic isolated-execution and input/output contracts belong here.
+
+## D-047 compatibility audit (2026-10-16)
+
+This is a code-level compatibility check against [SiSSi D-047](https://github.com/jsilvanus/simple-smart-signage/blob/main/docs/decisions/D-047-durable-workspaces-and-s3-artifacts.md), not an implementation claim. The current branch was inspected across the job contract, executor, S3 client, input cache, autoscaler, and `process`, `docker`, and `hetzner` providers.
+
+| D-047 requirement | Current fffleet evidence | Result |
+|---|---|---|
+| Complete, verified snapshots; atomic promotion; restore one internally consistent snapshot | The job contract and S3 client stage individual objects and upload output files/directories. There is no workspace snapshot, manifest, checkpoint promotion, or restore protocol. | **Not implemented; consumer-owned.** |
+| Distinguish checkpointed edits from pending/failed edits | fffleet reports job states and transfer/job results, not workspace checkpoint durability. | **Not implemented; consumer-owned.** |
+| Disposable execution has no durable host mounts/volumes and no host-backed workspace storage | The Docker provider creates containers without explicit bind mounts or volumes, but does not enforce tmpfs or non-persistent writable layers. Docker writable layers and the Hetzner worker's Docker container can use host-backed storage. The process provider starts a worker process on the host, and the normal job work directory/cache are filesystem paths. Container deletion is not proof that job data never persisted to host disk. | **Not satisfied or enforced.** Existing providers are not an isolated-execution boundary. |
+| Persistent authoring workspace is a separately managed resource | fffleet has worker/job lifecycles and scratch/cache directories, not an authoring-workspace resource or lifecycle. | **Not implemented; consumer-owned.** |
+| Explicit, authenticated, bounded, tenant/workspace-scoped transfers; no broad permanent S3 credentials in untrusted code | The job contract accepts `file:`, HTTP(S), and `s3:` URIs. S3 access uses credentials configured on the runner/worker; there is no per-job transfer grant, tenant/workspace authorization layer, or generic allowlisted transfer boundary. The current security model explicitly permits jobs to access files and networks available to the worker user. | **Not satisfied for untrusted execution.** Do not give this workload broad credentials or trust job URIs as authorization. |
+| Archive paths and symlinks cannot escape the authorized workspace | The S3 directory uploader walks regular files and directories and does not follow directory symlinks, but fffleet has no workspace-scoped archive extraction/validation subsystem. Ordinary `file:` inputs and arbitrary FFmpeg arguments are not confined to a workspace root. | **No workspace containment guarantee.** Archive validation must be implemented by the consumer/transfer layer if archives are introduced. |
+| Coordinated PostgreSQL/S3 recovery with tested consistency | fffleet does not own SiSSi's PostgreSQL workspace metadata, snapshots, publication, or recovery procedure. | **Consumer-owned; not implemented by fffleet.** |
+
+### Required boundary before SiSSi uses fffleet for untrusted project code
+
+1. Implement a separate isolated-execution provider/runtime contract. It must fail closed unless the runtime configuration satisfies the deployment's scratch-storage policy; merely omitting bind mounts is insufficient to prove that data cannot persist on host disks.
+2. Keep existing `process`, `docker`, and `hetzner` providers classified as ordinary worker providers until each has a separately tested isolation implementation. Do not route untrusted project code to them on the strength of this proposal.
+3. Keep tenant/workspace authorization, checkpoint validity and promotion, visible durability state, persistent authoring workspaces, and coordinated PostgreSQL/S3 recovery in SiSSi.
+4. If fffleet provides generic transfer primitives for isolated jobs, make the allowed inputs/outputs explicit and bounded, verify integrity, and keep credentials and authorization in trusted code. Do not treat ordinary job URIs or worker-wide S3 credentials as a scoped transfer grant.
+5. Add integration tests for the actual runtime configuration and teardown, including evidence for the required scratch persistence properties. Unit tests of provider request payloads alone cannot prove host-disk non-persistence.
+
+This audit records the current gap; it does not claim that the isolation or workspace-transfer features above have been implemented.
+
