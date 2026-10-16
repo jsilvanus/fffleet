@@ -52,6 +52,14 @@ Before implementation, specify and test:
 - Separate policies for workspace snapshots, transient logs, build artifacts, and immutable published outputs.
 - Verify provider configuration and teardown so ephemeral containers have no durable bind mounts/volumes and no job data remains on the fffleet host after cleanup; define whether scratch must be memory-backed or encrypted at rest.
 
+## Transfer boundary: primitives, not a sync service
+
+fffleet provides generic job input staging, output collection/upload, and object-store transfer primitives where supported by the job contract. It does not run a separate always-on S3 synchronization service and does not define application workspace synchronization semantics.
+
+The consumer owns the synchronization policy: which objects or snapshots to transfer, when to transfer them, what constitutes a checkpoint, which outputs are durable, how conflicts are handled, and how to recover after interruption. fffleet owns only the generic mechanics needed to stage declared job inputs and collect declared outputs.
+
+For isolated execution, keep transfer credentials and policy in trusted consumer/provider-side code. Do not give untrusted job code broad object-store credentials. Prefer explicit, bounded input and output transfers, with checksums, retries and idempotency where the consumer requires them. Do not add continuous bidirectional sync unless a concrete consumer requirement justifies a separately designed interface.
+
 ## Deliberately not specified yet
 
 This document does not select a specific S3 vendor, bucket naming convention, incremental snapshot algorithm, checkpoint interval, or exact API. Those are owned by the integrating application and should be selected after storage sizing and failure/recovery requirements are measured. It does not establish a fffleet workspace/session API or place the extended worker in this repository; only the generic isolated-execution and input/output contracts belong here.
