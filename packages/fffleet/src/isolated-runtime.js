@@ -110,7 +110,7 @@ export async function runIsolatedCommand({
     created = true;
     await runTool(runtime, ['exec', name, 'mkdir', '-p', '/work/in', '/work/out'], { signal, onStdout: output, onStderr: output });
 
-    await transferIntoContainer(runtime, name, inputDir, signal, output);
+    await transferIntoContainer(runtime, name, inputDir, signal, output, workBytes);
     signal?.throwIfAborted();
 
     const execArgs = ['exec', '--workdir=/work', `--user=${user}`];
@@ -233,11 +233,10 @@ async function regularFiles(root) {
   return files.sort((a, b) => a.relative.localeCompare(b.relative));
 }
 
-async function transferIntoContainer(runtime, name, inputDir, signal, onOutput) {
+async function transferIntoContainer(runtime, name, inputDir, signal, onOutput, maxBytes) {
   const files = await regularFiles(inputDir);
-  const maxBytes = 64 * 1024 ** 3;
   const total = files.reduce((n, file) => n + file.size, 0);
-  if (total > maxBytes) throw new Error('input transfer exceeds the 64 GiB safety limit');
+  if (total > maxBytes) throw new Error('input transfer exceeds the configured isolated workSize limit');
   const dirs = new Set(['/work/in']);
   for (const file of files) {
     const parent = file.relative.split('/').slice(0, -1);
