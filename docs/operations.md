@@ -24,7 +24,7 @@ apps ──(TLS, token)──▶ orchestrator ──(private network, worker tok
    FFFLEET_CLIENTS_FILE=/data/clients.json      # the apps that may log in
    FFFLEET_STATE_FILE=/data/state.db            # queued and running jobs survive restarts (Node 22.13+; the image has it)
    ```
-   The signing key also lets workers the autoscaler started before a restart rejoin. Back up `/data`: the key and the clients file are the only state that cannot be recreated.
+   The signing key also lets workers the autoscaler started before a restart rejoin. Back up `/data`: the key and clients file preserve identity and access, while `state.db` preserves job records and restart recovery. Losing the state file means the orchestrator no longer knows those jobs. State-save errors are logged rather than stopping job processing, so alert on those logs.
 3. **Add each app.** `npx fffleet-orchestrator add-client video-app --scope jobs` prints the secret once. Add a `metrics` client for Prometheus. Remove an app by deleting it from the clients file; its tokens stop working within a second.
 4. **Start workers.** Set `FFFLEET_ORCHESTRATOR_URL`, `FFFLEET_WORKER_TOKEN`, a stable `FFFLEET_WORKER_ID`, `FFFLEET_ADVERTISE_URL` (how the orchestrator reaches the worker) and slots. `FFFLEET_CAPABILITIES=mount:/media` marks workers that share a mount, so jobs that need it `requires` it.
 5. **Storage.** Give workers S3 credentials (`AWS_*`, `FFFLEET_S3_ENDPOINT` for S3-compatible stores) and use `s3://` inputs and outputs, so no worker needs the others' disks. Set `FFFLEET_CACHE_DIR` on workers that read the same large sources repeatedly.
