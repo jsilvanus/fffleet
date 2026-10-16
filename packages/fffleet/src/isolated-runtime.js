@@ -114,7 +114,8 @@ export async function runIsolatedCommand({
     signal?.throwIfAborted();
 
     const execArgs = ['exec', '--workdir=/work', `--user=${user}`];
-    for (const [key, value] of Object.entries(env)) execArgs.push('--env', `${key}=${value}`);
+    const isolatedEnv = { HOME: '/tmp', TMPDIR: '/tmp', XDG_CACHE_HOME: '/tmp/.cache', FFFLEET_INPUT_DIR: '/work/in', FFFLEET_OUTPUT_DIR: '/work/out', ...env };
+    for (const [key, value] of Object.entries(isolatedEnv)) execArgs.push('--env', `${key}=${value}`);
     execArgs.push(name, command, ...args);
     const exitCode = await runTool(runtime, execArgs, {
       signal,
