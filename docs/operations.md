@@ -57,7 +57,7 @@ Without a state file the orchestrator forgets all of them; workers keep running 
 | You see | Usually |
 |---|---|
 | Job stays `queued` | No worker has a free slot in the job's class, the right `kind`, or every capability in `requires` (`GET /v1/workers`, `GET /v1/capabilities`). An `s3://` job needs a worker with S3 credentials. |
-| `WORKER_LOST` | The worker missed its heartbeats (`FFFLEET_HEARTBEAT_TIMEOUT_MS`, 15 s), restarted, or lost the job. Check the worker's logs and the network between the two. |
+| `WORKER_LOST` | The worker missed its heartbeats (`FFFLEET_HEARTBEAT_TIMEOUT_MS`, 15 s), restarted, or lost the job. Check the worker's logs and the network between the two. The actual outcome may be unknown; a lost dispatch response can mean the worker is still running a job that has been requeued elsewhere. |
 | `DISPATCH_REJECTED` | The worker refused the spec (unknown job type, unsupported scheme, kind not accepted). The message says why. |
 | `FFMPEG_EXIT` | ffmpeg itself failed. `stderrTail` on the job has its last lines. Running jobs show the newest lines as they appear (`job.on('stderr', ...)`, `stderrTail` in the snapshot), which helps with stream jobs that never exit. |
 | `INPUT_FAILED`, `UPLOAD_FAILED`, `OUTPUT_MISSING` | Staging: the URL, credentials or disk space. |
