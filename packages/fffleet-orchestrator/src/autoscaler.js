@@ -197,7 +197,7 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
 
     const creating = [];
     for (const pool of pools.values()) {
-      if (t < pool.backoffUntil) continue;
+      if (pendingDiscovery.has(pool.name) || t < pool.backoffUntil) continue;
       const missingMin = pool.min - alive(pool).length;
       const toStart = Math.min(Math.max(planned.get(pool.name), missingMin), pool.maxConcurrentCreates);
       for (let i = 0; i < toStart; i++) creating.push(create(pool));
@@ -257,6 +257,7 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
     if (ticking || stopped) return;
     ticking = true;
     try {
+      await retryDiscovery();
       sync();
       await retryRemovals();
       await scaleUp();
@@ -272,20 +273,7 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
   return {
     /** Adopts instances that survived an orchestrator restart, then starts ticking. */
     async start() {
-      for (const [name, provider] of Object.entries(providers)) {
-        let found = [];
-        try {
-          found = await provider.list(autoscale.id);
-        } catch (err) {
-          log(`autoscaler: could not list existing instances of pool ${name}: ${err.message}`);
-        }
-        for (const f of found) {
-          if (instances.has(f.workerId)) continue;
-          // A pool's workers belong to that pool even if the listing came from a shared provider.
-          instances.set(f.workerId, { id: f.workerId, pool: f.pool, provider, providerId: f.providerId, state: 'booting', createdAt: f.createdAt ?? now(), idleSince: null, adopted: true });
-          log(`autoscaler: found worker ${f.workerId} from before the restart in pool ${f.pool}`);
-        }
-      }
+      for (const [name, provider] of Object.entries(providers)) await discover(name, provider);
       stopped = false;
       await tick();
       timer = setInterval(tick, autoscale.interval);
