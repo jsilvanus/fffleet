@@ -234,7 +234,7 @@ async function transferIntoContainer(runtime, name, inputDir, signal, onOutput) 
   } catch (err) {
     for (const child of [find, pack, unpack]) child.kill();
     await statuses;
-    throw err;
+    throw new Error(`input transfer failed: ${err.message}; ${errors.join('').slice(-2000)}`);
   }
 }
 
@@ -253,7 +253,7 @@ async function transferOutOfContainer(runtime, name, outputDir, signal, onOutput
   } catch (err) {
     for (const child of [pack, unpack]) child.kill();
     await statuses;
-    throw err;
+    throw new Error(`output transfer failed: ${err.message}; ${errors.join('').slice(-2000)}`);
   }
 }
 
