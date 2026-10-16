@@ -8,6 +8,7 @@ const TMPFS_MAGIC = 0x01021994;
 const STDERR_LIMIT = 8192;
 const SAFE_ENV = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SAFE_USER = /^\d+:\d+$/;
+const SENSITIVE_ENV = /(?:SECRET|TOKEN|PASSWORD|CREDENTIAL|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|API[_-]?KEY)/i;
 
 /**
  * Run a command in a fresh, network-isolated OCI container without host bind mounts.
@@ -50,7 +51,7 @@ export async function runIsolatedCommand({
   if (!Array.isArray(args) || args.some(a => typeof a !== 'string')) throw new Error('args must be an array of strings');
   if (!SAFE_USER.test(user)) throw new Error('user must be a numeric UID:GID pair');
   for (const [key, value] of Object.entries(env)) {
-    if (!SAFE_ENV.test(key) || typeof value !== 'string' || /[\0\r\n]/.test(value)) {
+    if (!SAFE_ENV.test(key) || SENSITIVE_ENV.test(key) || typeof value !== 'string' || /[\0\r\n]/.test(value)) {
       throw new Error(`invalid isolated environment variable ${key}`);
     }
   }
