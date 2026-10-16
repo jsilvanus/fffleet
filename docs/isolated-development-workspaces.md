@@ -9,6 +9,8 @@ This document defines how an integrating application can use fffleet's generic j
 
 fffleet remains generic: job contract, scheduling, worker capacity, execution-provider integration, and generic job status/logs/output references. The integrating application owns workspace authorization and lifecycle, authoring history, input/output meaning, recovery decisions, review, and publication.
 
+**Implementation status:** this document describes a proposed integration boundary, not a currently available sandbox guarantee. The existing `process`, `docker`, and `hetzner` providers do not by themselves establish the disposable isolated-execution contract below. Until a provider/runtime is implemented and tested against it, ordinary fffleet jobs must be treated according to [the existing security model](security.md): submitted ffmpeg arguments and custom executors run with the worker's privileges.
+
 ## Workload separation
 
 Keep application lifecycle separate from generic execution:
