@@ -13,7 +13,7 @@ test('Podman isolated runtime transfers regular files without host mounts', { ti
 
     const result = await runIsolatedCommand({
       runtime: 'podman',
-      image: 'docker.io/library/alpine:3.22',
+      image: 'docker.io/library/debian:bookworm-slim',
       command: '/bin/sh',
       args: ['-c', 'cat /work/in/input.txt > /work/out/result.txt; ln -s /etc/passwd /work/out/host-file-link'],
       workDir,
