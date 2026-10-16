@@ -24,7 +24,8 @@ export function createHetznerProvider({ pool, fetch: f = globalThis.fetch, log =
         body: body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(30000),
       });
-      if ((res.status === 429 || res.status >= 500) && attempt < 3) {
+      const retryable = res.status === 429 || (res.status >= 500 && !(method === 'POST' && path === '/servers'));
+      if (retryable && attempt < 3) {
         const wait = Number(res.headers.get('retry-after')) * 1000 || retryDelayMs * 2 ** attempt;
         log(`hetzner: ${method} ${path} answered ${res.status}; retrying in ${Math.round(wait / 100) / 10}s`);
         await new Promise(r => setTimeout(r, wait));
