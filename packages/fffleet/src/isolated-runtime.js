@@ -147,7 +147,7 @@ async function isSwapDisabled() {
 }
 
 function sizeBytes(value, name, maxBytes) {
-  const match = String(value).match(/^(\\d+)([kmg])?$/i);
+  const match = String(value).match(/^(\d+)([kmg])?$/i);
   if (!match) throw new Error(`${name} must be a numeric size such as 512m or 2g`);
   const multiplier = { k: 1024, m: 1024 ** 2, g: 1024 ** 3 }[(match[2] ?? '').toLowerCase()] ?? 1;
   const bytes = Number(match[1]) * multiplier;
