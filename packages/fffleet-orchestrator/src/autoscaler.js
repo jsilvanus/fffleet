@@ -112,6 +112,31 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
     }
   }
 
+  async function discover(poolName, provider) {
+    try {
+      const found = await provider.list(autoscale.id);
+      for (const item of found) {
+        if (instances.has(item.workerId)) continue;
+        instances.set(item.workerId, { id: item.workerId, pool: item.pool, provider: providers[item.pool] ?? provider, providerId: item.providerId, state: 'booting', createdAt: item.createdAt ?? now(), idleSince: null, adopted: true });
+        log('autoscaler: found worker ' + item.workerId + ' from before the restart in pool ' + item.pool);
+      }
+      pendingDiscovery.delete(poolName);
+      return true;
+    } catch (err) {
+      pendingDiscovery.add(poolName);
+      log('autoscaler: could not list existing instances of pool ' + poolName + ': ' + err.message + '; will retry discovery');
+      return false;
+    }
+  }
+
+  async function retryDiscovery() {
+    for (const name of [...pendingDiscovery]) {
+      const provider = providers[name];
+      if (provider) await discover(name, provider);
+      else pendingDiscovery.delete(name);
+    }
+  }
+
   /** Marks instances ready when their worker registers, and removes ones whose worker vanished. */
   function sync() {
     const known = new Map([...view.workers()].map(w => [w.id, w]));
