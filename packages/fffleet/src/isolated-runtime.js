@@ -97,7 +97,7 @@ export async function runIsolatedCommand({
     '--entrypoint=/bin/sh', image, '-c', 'while :; do sleep 3600; done',
   ];
 
-  let created = false;
+  let createAttempted = false;
   let stderrTail = '';
   const output = line => {
     if (!line) return;
@@ -106,8 +106,8 @@ export async function runIsolatedCommand({
   };
   try {
     signal?.throwIfAborted();
+    createAttempted = true;
     await runTool(runtime, createArgs, { signal });
-    created = true;
     await runTool(runtime, ['exec', name, 'mkdir', '-p', '/work/in', '/work/out'], { signal, onStdout: output, onStderr: output });
 
     await transferIntoContainer(runtime, name, inputDir, signal, output, workBytes);
@@ -131,7 +131,7 @@ export async function runIsolatedCommand({
     const outputs = await listRelativeFiles(outputDir);
     return { exitCode, stderrTail: stderrTail.trim() || null, outputs };
   } finally {
-    if (created) await runTool(runtime, ['rm', '--force', name], { allowNonZero: true }).catch(() => {});
+    if (createAttempted) await runTool(runtime, ['rm', '--force', name], { allowNonZero: true }).catch(() => {});
   }
 }
 
@@ -199,7 +199,8 @@ async function listRelativeFiles(root) {
 function runTool(command, args, { signal, allowNonZero = false, onStdout = () => {}, onStderr = () => {} } = {}) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason ?? new Error('aborted'));
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], signal });
+    const actualArgs = command === 'podman' ? ['--remote=false', ...args] : args;
+    const child = spawn(command, actualArgs, { stdio: ['ignore', 'pipe', 'pipe'], signal });
     let stderrTail = '';
     child.stdout.on('data', chunk => onStdout(chunk.toString().trimEnd()));
     child.stderr.on('data', chunk => {
@@ -284,7 +285,8 @@ async function transferOutOfContainer(runtime, name, outputDir, signal, onOutput
 
 function captureTool(command, args, { signal, maxBytes = 8 * 1024 * 1024 } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], signal });
+    const actualArgs = command === 'podman' ? ['--remote=false', ...args] : args;
+    const child = spawn(command, actualArgs, { stdio: ['ignore', 'pipe', 'pipe'], signal });
     const chunks = [];
     let size = 0;
     let stderr = '';
