@@ -68,6 +68,7 @@ export async function runIsolatedCommand({
   if (!(await isSwapDisabled())) {
     throw new Error('isolated execution refused: host swap is enabled or could not be verified disabled; tmpfs data could otherwise be paged to disk');
   }
+  if (runtime === 'docker') await assertLocalDocker();
   signal?.throwIfAborted();
 
   const inputDir = await checkedChildDir(root, 'in');
@@ -143,6 +144,31 @@ async function isSwapDisabled() {
   } catch {
     return false;
   }
+}
+
+async function assertLocalDocker() {
+  const configured = process.env.DOCKER_HOST;
+  if (configured) {
+    if (!isLocalDockerEndpoint(configured)) throw new Error('isolated execution refused: remote Docker endpoints are not supported; use local rootless Podman or a local Docker daemon');
+    return;
+  }
+  const contextResult = await captureTool('docker', ['context', 'show']);
+  const context = contextResult.stdout.toString('utf8').trim();
+  if (!context) throw new Error('isolated execution refused: could not identify the Docker context');
+  const inspected = await captureTool('docker', ['context', 'inspect', context, '--format', '{{json .Endpoints.docker.Host}}']);
+  let endpoint;
+  try {
+    endpoint = JSON.parse(inspected.stdout.toString('utf8').trim());
+  } catch {
+    throw new Error('isolated execution refused: could not verify that the Docker context is local');
+  }
+  if (typeof endpoint !== 'string' || !isLocalDockerEndpoint(endpoint)) {
+    throw new Error('isolated execution refused: remote Docker contexts are not supported; use local rootless Podman or a local Docker daemon');
+  }
+}
+
+function isLocalDockerEndpoint(endpoint) {
+  return /^(?:unix:\/\/|npipe:\/\/|\\\\\.\\pipe\\)/i.test(endpoint);
 }
 
 function sizeBytes(value, name, maxBytes) {
