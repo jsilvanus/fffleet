@@ -27,6 +27,8 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
   const pools = new Map(config.pools.map(p => [p.name, { ...p, observed: new Set(), failures: 0, backoffUntil: 0 }]));
   /** @type {Map<string, { id: string, pool: string, providerId: string | null, state: 'creating' | 'booting' | 'ready' | 'draining' | 'removing', createdAt: number, idleSince: number | null, adopted?: boolean, destroyAttempts?: number }>} */
   const instances = new Map();
+  // Failed startup discovery must be retried before this pool scales up, to avoid duplicate cloud workers.
+  const pendingDiscovery = new Set();
   let timer = null;
   let ticking = false;
   let stopped = false;
