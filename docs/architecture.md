@@ -102,6 +102,10 @@ fffleet stores no media. Endpoints are URIs: `file:` on a shared mount (placed w
 
 Both servers serve `GET /metrics` (Prometheus text). The orchestrator reports the fleet (workers, slots, queue length by class, jobs by owner/class/state, wait and run histograms, dispatch failures, lost workers, autoscaler instances); each worker reports itself (slots, per-job speed and fps, ffmpeg CPU and memory, transfer bytes, host load). Workers are *not* proxied through the orchestrator: `GET /v1/sd/prometheus` lists them as HTTP service-discovery targets, so a dead worker shows as `up == 0`.
 
+## Isolated development workspaces
+
+The proposed integration direction for interactive development sessions, S3-backed workspace snapshots, scoped object transfers, and recovery is documented in [isolated-development-workspaces.md](isolated-development-workspaces.md). This is an architecture proposal, not a claim that fffleet already implements a general workspace/session API.
+
 ## Extending
 
 - **Other job types.** An executor is `{ type, run(spec, runtime) }`. Pass `executors` to `createWorker` / `JobManager`, or list modules in `FFFLEET_EXECUTORS`. The worker advertises `type:<type>` so the orchestrator routes such jobs only there; the spec's `<type>` property carries the payload. The runtime gives you `workDir`, an abort `signal`, `setState`, `progress`, `stderr`, S3 and the input cache. `ffprobe` is built this way.
