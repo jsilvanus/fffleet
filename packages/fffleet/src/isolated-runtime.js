@@ -201,12 +201,17 @@ function runTool(command, args, { signal, allowNonZero = false, onStdout = () =>
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason ?? new Error('aborted'));
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], signal });
+    let stderrTail = '';
     child.stdout.on('data', chunk => onStdout(chunk.toString().trimEnd()));
-    child.stderr.on('data', chunk => onStderr(chunk.toString().trimEnd()));
+    child.stderr.on('data', chunk => {
+      const text = chunk.toString();
+      stderrTail = (stderrTail + text).slice(-STDERR_LIMIT);
+      onStderr(text.trimEnd());
+    });
     child.once('error', reject);
     child.once('close', code => {
       if (code === 0 || (allowNonZero && code !== null)) resolve(code ?? 1);
-      else reject(new Error(`${command} ${args[0]} failed with exit code ${code}`));
+      else reject(new Error(`${command} ${args[0]} failed with exit code ${code}: ${stderrTail.trim()}`));
     });
   });
 }
