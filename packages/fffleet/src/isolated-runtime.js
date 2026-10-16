@@ -93,8 +93,8 @@ export async function runIsolatedCommand({
     '--cap-drop=ALL', '--security-opt=no-new-privileges',
     `--pids-limit=${pids}`, `--memory=${memory}`, `--memory-swap=${memory}`, `--cpus=${cpus}`,
     `--user=${user}`,
-    `--tmpfs=/work:rw,nosuid,nodev,size=${workSize},uid=${user.split(':')[0]},gid=${user.split(':')[1]}`,
-    `--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=${tmpSize},uid=${user.split(':')[0]},gid=${user.split(':')[1]}`,
+    `--tmpfs=/work:rw,nosuid,nodev,size=${workSize},mode=0777`,
+    `--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=${tmpSize},mode=1777`,
     '--entrypoint=/bin/sh', image, '-c', 'while :; do sleep 3600; done',
   ];
 
