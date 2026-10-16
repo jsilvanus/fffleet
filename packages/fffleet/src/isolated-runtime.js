@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdir, readdir, realpath, rm, statfs } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, rm, statfs } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 
@@ -63,6 +63,9 @@ export async function runIsolatedCommand({
   if (requireTmpfs && !(await isTmpfs(root))) {
     throw new Error('isolated execution refused: workDir is not on tmpfs; set FFFLEET_WORK_DIR to a memory-backed filesystem');
   }
+  if (!(await isSwapDisabled())) {
+    throw new Error('isolated execution refused: host swap is enabled or could not be verified disabled; tmpfs data could otherwise be paged to disk');
+  }
   signal?.throwIfAborted();
 
   const inputDir = await checkedChildDir(root, 'in');
@@ -84,7 +87,7 @@ export async function runIsolatedCommand({
     'run', '--detach', '--name', name,
     '--network=none', '--read-only',
     '--cap-drop=ALL', '--security-opt=no-new-privileges',
-    `--pids-limit=${pids}`, `--memory=${memory}`, `--cpus=${cpus}`,
+    `--pids-limit=${pids}`, `--memory=${memory}`, `--memory-swap=${memory}`, `--cpus=${cpus}`,
     `--user=${user}`,
     `--tmpfs=/work:rw,nosuid,nodev,size=${workSize},uid=${user.split(':')[0]},gid=${user.split(':')[1]}`,
     `--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=${tmpSize},uid=${user.split(':')[0]},gid=${user.split(':')[1]}`,
@@ -125,6 +128,16 @@ export async function runIsolatedCommand({
     return { exitCode, stderrTail: stderrTail.trim() || null, outputs };
   } finally {
     if (created) await runTool(runtime, ['rm', '--force', name], { allowNonZero: true }).catch(() => {});
+  }
+}
+
+/** True only when /proc/swaps confirms no active swap devices/files; unsupported systems fail closed. */
+async function isSwapDisabled() {
+  try {
+    const lines = (await readFile('/proc/swaps', 'utf8')).trim().split('\\n');
+    return lines.length <= 1;
+  } catch {
+    return false;
   }
 }
 
