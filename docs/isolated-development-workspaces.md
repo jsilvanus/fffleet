@@ -9,7 +9,7 @@ This document defines how an integrating application can use fffleet's generic j
 
 fffleet remains generic: job contract, scheduling, worker capacity, execution-provider integration, and generic job status/logs/output references. The integrating application owns workspace authorization and lifecycle, authoring history, input/output meaning, recovery decisions, review, and publication.
 
-**Implementation status:** this document describes a proposed integration boundary, not a currently available sandbox guarantee. The existing `process`, `docker`, and `hetzner` providers do not by themselves establish the disposable isolated-execution contract below. Until a provider/runtime is implemented and tested against it, ordinary fffleet jobs must be treated according to [the existing security model](security.md): submitted ffmpeg arguments and custom executors run with the worker's privileges.
+**Implementation status:** the existing `process`, `docker`, and `hetzner` worker providers do not by themselves establish the disposable isolated-execution contract below. An initial `runIsolatedCommand()` runtime primitive now exists in the `fffleet` package (Podman by default, Docker optional), but it is an opt-in primitive for a trusted custom executor, not an automatic per-job execution mode and not yet a complete end-to-end sandbox integration. Ordinary fffleet jobs must still be treated according to [the existing security model](security.md): submitted ffmpeg arguments and custom executors run with the worker's privileges unless the caller explicitly uses and correctly configures the isolated runtime.
 
 ## Workload separation
 
@@ -20,6 +20,21 @@ Keep application lifecycle separate from generic execution:
 - **Ordinary fleet job:** existing batch/stream jobs continue to use fffleet's existing generic job contract and scheduling.
 
 A regular worker must not execute untrusted project code in its own security context. It may dispatch or manage a generic isolated execution through a trusted wrapper/provider. Podman is the initial provider target, while the provider contract remains runtime-independent. Any extended worker or application-specific adapter is outside this repository.
+
+## Isolated runtime primitive (initial implementation)
+
+The `fffleet` package exports `runIsolatedCommand()`. It is intended to be called by a trusted custom executor, not directly exposed as a general-purpose unauthenticated command API.
+
+- **Runtime:** Podman by default; Docker CLI is an optional alternative.
+- **Container:** one fresh container per call, removed in a `finally` cleanup path.
+- **Filesystem:** read-only container root; `/work` and `/tmp` are tmpfs; no host bind mounts or named volumes are created. Input files are copied into the container and regular output files are copied back through archive streams.
+- **Network and privileges:** `--network=none`, all Linux capabilities dropped, `no-new-privileges`, a non-root numeric UID:GID, and configurable CPU, memory, PID and tmpfs limits.
+- **Fail-closed scratch policy:** by default the host-side job `workDir` must itself be on Linux tmpfs. Configure the worker's `FFFLEET_WORK_DIR` accordingly (for example, a directory under `/dev/shm` on Linux). If it is not tmpfs, the helper refuses to run. Do not disable this check in production.
+- **Image contract:** the image must contain `/bin/sh`, `sleep`, `find` and `tar`. Use trusted/pinned images; this helper does not authenticate or authorize image references.
+- **Explicit environment:** only variables passed in `env` are added to the execution process; host environment variables and credentials are not automatically forwarded.
+- **Transfers:** the caller stages approved inputs under `workDir/in` and receives regular files under `workDir/out`. The helper does not perform S3 synchronization or decide which objects a tenant is authorized to access.
+
+This is a first runtime primitive, not proof of a complete security boundary. It has unit coverage for validation and fail-closed tmpfs detection, but the current CI does not yet run a real Podman/Docker integration test. A production integration should add runtime-enabled tests for teardown, cancellation, limits, transfer integrity, and attempts to escape the output tree. Use rootless Podman where possible; Docker's daemon/socket is a high-privilege boundary and should not be exposed to untrusted jobs.
 
 ## Workspace and object-storage model
 
@@ -82,7 +97,7 @@ This is a code-level compatibility check against [SiSSi D-047](https://github.co
 
 ### Required boundary before SiSSi uses fffleet for untrusted project code
 
-1. Implement a separate isolated-execution provider/runtime contract. It must fail closed unless the runtime configuration satisfies the deployment's scratch-storage policy; merely omitting bind mounts is insufficient to prove that data cannot persist on host disks.
+1. Complete the isolated-execution provider integration around `runIsolatedCommand()`: route only explicitly opted-in job types through it, fail closed unless the runtime configuration satisfies the deployment's scratch-storage policy, and add runtime-enabled tests. Merely omitting bind mounts is insufficient to prove that data cannot persist on host disks.
 2. Keep existing `process`, `docker`, and `hetzner` providers classified as ordinary worker providers until each has a separately tested isolation implementation. Do not route untrusted project code to them on the strength of this proposal.
 3. Keep tenant/workspace authorization, checkpoint validity and promotion, visible durability state, persistent authoring workspaces, and coordinated PostgreSQL/S3 recovery in SiSSi.
 4. If fffleet provides generic transfer primitives for isolated jobs, make the allowed inputs/outputs explicit and bounded, verify integrity, and keep credentials and authorization in trusted code. Do not treat ordinary job URIs or worker-wide S3 credentials as a scoped transfer grant.
