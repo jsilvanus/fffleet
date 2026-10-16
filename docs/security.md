@@ -77,12 +77,14 @@ Tokens and client secrets travel in HTTP headers/bodies. fffleet serves plain HT
 These came out of the 2026-10 code review. They are documented rather than changed because they alter behaviour or need design decisions.
 
 1. **No sandbox or path allow-list for `file:` and ffmpeg arguments** (see above). A configurable allow-list of `file:` roots would help for well-behaved clients but cannot contain arbitrary `ffmpeg.args`.
-2. **Local fallback after an ambiguous failure can run a job twice.** If the remote accepted the job but the response was lost (timeout, connection reset), the client treats it as unreachable and runs the job locally while the remote may also run it. Idempotency protects a *retry against the fleet*, not a fallback. Use `fallback: 'none'` for jobs with side effects that must not repeat, or make outputs idempotent.
-3. **Job ids are a single namespace** across apps (409 reveals existence). Prefix ids.
-4. **No login rate limiting** in the orchestrator itself.
-5. **A client that disconnects from an orchestrator-relayed `/stdout`** stops the relay but leaves the worker-side reader attached, so ffmpeg stalls until the job is cancelled or times out. Cancel the job when you abandon its stdout.
-6. **Presigned URLs and arguments are persisted** in the state file and returned to the owner and admins.
-7. **`add-client` is a local file operation**: run it on the host that has the clients file; the orchestrator picks changes up within a second. It is not an API.
-8. **Join secrets derive from the signing key file's bytes** when `autoscale.joinSecret` is not set (one key serving two purposes). Set `autoscale.joinSecret` explicitly to decouple them.
+2. **Ambiguous dispatch can run a job twice inside the fleet.** If a worker accepts a job but the orchestrator loses the dispatch response, the orchestrator can requeue the job and send it to another worker while the first worker is still running it. A worker 5xx response can also be ambiguous if the worker started work before returning the error. Dispatch retries are therefore not exactly-once. Design output names and side effects to be idempotent, or avoid automatic retry paths for work that must not repeat.
+3. **Local fallback after an ambiguous submission can run a job twice.** If the remote orchestrator accepted the job but the response was lost (timeout, connection reset), the client treats the fleet as unreachable and runs it locally while the remote may also run it. Idempotency protects a retry against the same server while its record is retained; it does not deduplicate across local fallback. Use `fallback: 'none'` for jobs with side effects that must not repeat, or make outputs idempotent.
+4. **Cancellation is not proof of remote termination.** If the worker cannot be reached, the orchestrator records the job as cancelled and releases its slot, but the process on the worker may continue. A client should treat this as a control-plane result, not confirmation that external side effects stopped.
+5. **Job ids are a single namespace** across apps (409 reveals existence). Prefix ids.
+6. **No login rate limiting** in the orchestrator itself.
+7. **A client that disconnects from an orchestrator-relayed `/stdout`** stops the relay but leaves the worker-side reader attached, so ffmpeg stalls until the job is cancelled or times out. Cancel the job when you abandon its stdout.
+8. **Presigned URLs and arguments are persisted** in the state file and returned to the owner and admins.
+9. **`add-client` is a local file operation**: run it on the host that has the clients file; the orchestrator picks changes up within a second. It is not an API.
+10. **Join secrets derive from the signing key file's bytes** when `autoscale.joinSecret` is not set (one key serving two purposes). Set `autoscale.joinSecret` explicitly to decouple them.
 
 Report vulnerabilities privately through GitHub's "Report a vulnerability" on the repository's Security tab.
