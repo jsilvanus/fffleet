@@ -22,6 +22,20 @@ None of this is a bug; it is the contract. It means:
 2. **Run workers as an unprivileged user, preferably in a container** with only the media it needs mounted (the supplied image runs as `node`), no host mounts of credentials, and no access to the metadata service or internal networks it does not need.
 3. **One fleet per trust level.** Do not share workers between an app you trust and one whose job specs you do not control.
 
+## Opt-in isolated command runtime
+
+The `runIsolatedCommand()` helper is an opt-in primitive for a trusted custom executor, not the default executor for `ffmpeg` or a per-tenant authorization system. It defaults to Podman and supports the Docker CLI as an alternative. It creates a fresh container with no network, no host mounts, a read-only root filesystem, tmpfs scratch, dropped capabilities, `no-new-privileges`, a non-root UID:GID and CPU/memory/PID limits. The host-side job work directory must be on Linux tmpfs; the helper fails closed otherwise. Inputs and outputs are copied file-by-file through the runtime CLI; no host directories are mounted.
+
+Important limits:
+
+- The caller must authorize and stage inputs, choose trusted/pinned images and commands, and publish or upload outputs. The helper does not grant tenant-scoped S3 access or provide checkpoint semantics.
+- Do not use a persistent `FFFLEET_CACHE_DIR` for jobs routed through this helper; the custom executor must stage data into the job's tmpfs-backed `workDir` using trusted transfer code.
+- Only regular files are transferred; symlinks and special files are excluded. The image needs `/bin/sh`, `sleep` and `find`.
+- CI has a Podman integration test for basic execution, file transfer, tmpfs/no-swap enforcement and symlink exclusion. Cancellation, resource-limit enforcement, transfer-size exhaustion and cleanup during runtime failures still need more coverage. Do not treat the helper as production-certified until those cases are tested.
+- Rootless Podman is preferred. Docker's daemon remains a high-privilege boundary, and neither runtime prevents kernel/runtime vulnerabilities.
+
+Ordinary jobs remain unsandboxed unless an integrating application explicitly routes them through this helper in a trusted custom executor. Do not infer isolation from a worker merely running in a container.
+
 ## Authentication
 
 | Surface | Open by default? | How to close it |
@@ -77,12 +91,14 @@ Tokens and client secrets travel in HTTP headers/bodies. fffleet serves plain HT
 These came out of the 2026-10 code review. They are documented rather than changed because they alter behaviour or need design decisions.
 
 1. **No sandbox or path allow-list for `file:` and ffmpeg arguments** (see above). A configurable allow-list of `file:` roots would help for well-behaved clients but cannot contain arbitrary `ffmpeg.args`.
-2. **Local fallback after an ambiguous failure can run a job twice.** If the remote accepted the job but the response was lost (timeout, connection reset), the client treats it as unreachable and runs the job locally while the remote may also run it. Idempotency protects a *retry against the fleet*, not a fallback. Use `fallback: 'none'` for jobs with side effects that must not repeat, or make outputs idempotent.
-3. **Job ids are a single namespace** across apps (409 reveals existence). Prefix ids.
-4. **No login rate limiting** in the orchestrator itself.
-5. **A client that disconnects from an orchestrator-relayed `/stdout`** stops the relay but leaves the worker-side reader attached, so ffmpeg stalls until the job is cancelled or times out. Cancel the job when you abandon its stdout.
-6. **Presigned URLs and arguments are persisted** in the state file and returned to the owner and admins.
-7. **`add-client` is a local file operation**: run it on the host that has the clients file; the orchestrator picks changes up within a second. It is not an API.
-8. **Join secrets derive from the signing key file's bytes** when `autoscale.joinSecret` is not set (one key serving two purposes). Set `autoscale.joinSecret` explicitly to decouple them.
+2. **Ambiguous dispatch can run a job twice inside the fleet.** If a worker accepts a job but the orchestrator loses the dispatch response, the orchestrator can requeue the job and send it to another worker while the first worker is still running it. A worker 5xx response can also be ambiguous if the worker started work before returning the error. Dispatch retries are therefore not exactly-once. Design output names and side effects to be idempotent, or avoid automatic retry paths for work that must not repeat.
+3. **Local fallback after an ambiguous submission can run a job twice.** If the remote orchestrator accepted the job but the response was lost (timeout, connection reset), the client treats the fleet as unreachable and runs it locally while the remote may also run it. Idempotency protects a retry against the same server while its record is retained; it does not deduplicate across local fallback. Use `fallback: 'none'` for jobs with side effects that must not repeat, or make outputs idempotent.
+4. **Cancellation is not proof of remote termination.** If the worker cannot be reached, the orchestrator records the job as cancelled and releases its slot, but the process on the worker may continue. A client should treat this as a control-plane result, not confirmation that external side effects stopped.
+5. **Job ids are a single namespace** across apps (409 reveals existence). Prefix ids.
+6. **No login rate limiting** in the orchestrator itself.
+7. **A client that disconnects from an orchestrator-relayed `/stdout`** stops the relay but leaves the worker-side reader attached, so ffmpeg stalls until the job is cancelled or times out. Cancel the job when you abandon its stdout.
+8. **Presigned URLs and arguments are persisted** in the state file and returned to the owner and admins.
+9. **`add-client` is a local file operation**: run it on the host that has the clients file; the orchestrator picks changes up within a second. It is not an API.
+10. **Join secrets derive from the signing key file's bytes** when `autoscale.joinSecret` is not set (one key serving two purposes). Set `autoscale.joinSecret` explicitly to decouple them.
 
 Report vulnerabilities privately through GitHub's "Report a vulnerability" on the repository's Security tab.

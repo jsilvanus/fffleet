@@ -27,6 +27,8 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
   const pools = new Map(config.pools.map(p => [p.name, { ...p, observed: new Set(), failures: 0, backoffUntil: 0 }]));
   /** @type {Map<string, { id: string, pool: string, providerId: string | null, state: 'creating' | 'booting' | 'ready' | 'draining' | 'removing', createdAt: number, idleSince: number | null, adopted?: boolean, destroyAttempts?: number }>} */
   const instances = new Map();
+  // Failed startup discovery must be retried before this pool scales up, to avoid duplicate cloud workers.
+  const pendingDiscovery = new Set();
   let timer = null;
   let ticking = false;
   let stopped = false;
@@ -36,7 +38,7 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
 
   const alive = pool => [...instances.values()].filter(i => i.pool === pool.name && i.state !== 'removing');
   const count = (pool, ...states) => [...instances.values()].filter(i => i.pool === pool.name && states.includes(i.state)).length;
-  const totalAlive = () => [...instances.values()].filter(i => i.state !== 'removing').length;
+  const totalAlive = () => instances.size;
 
   /** What a worker of this pool can do: what the config declares plus what its running workers reported. */
   function poolCaps(pool) {
@@ -86,10 +88,11 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
       log(`autoscaler: started worker ${workerId} in pool ${pool.name}`);
     } catch (err) {
       instances.delete(workerId);
+      pendingDiscovery.add(pool.name);
       pool.failures++;
       pool.backoffUntil = now() + Math.min(10 * 60000, 5000 * 2 ** Math.min(pool.failures, 7));
       metrics?.creates.inc({ pool: pool.name, result: 'error' });
-      log(`autoscaler: could not start a worker in pool ${pool.name}: ${err.message}; retrying after ${Math.round((pool.backoffUntil - now()) / 1000)}s`);
+      log(`autoscaler: could not start a worker in pool ${pool.name}: ${err.message}; reconciling provider state and retrying after ${Math.round((pool.backoffUntil - now()) / 1000)}s`);
     }
   }
 
@@ -107,6 +110,31 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
     } catch (err) {
       inst.destroyAttempts = (inst.destroyAttempts ?? 0) + 1;
       log(`autoscaler: could not remove worker ${inst.id} (attempt ${inst.destroyAttempts}): ${err.message}; will retry`);
+    }
+  }
+
+  async function discover(poolName, provider) {
+    try {
+      const found = await provider.list(autoscale.id);
+      for (const item of found) {
+        if (instances.has(item.workerId)) continue;
+        instances.set(item.workerId, { id: item.workerId, pool: item.pool, provider: providers[item.pool] ?? provider, providerId: item.providerId, state: 'booting', createdAt: item.createdAt ?? now(), idleSince: null, adopted: true });
+        log('autoscaler: found worker ' + item.workerId + ' from before the restart in pool ' + item.pool);
+      }
+      pendingDiscovery.delete(poolName);
+      return true;
+    } catch (err) {
+      pendingDiscovery.add(poolName);
+      log('autoscaler: could not list existing instances of pool ' + poolName + ': ' + err.message + '; will retry discovery');
+      return false;
+    }
+  }
+
+  async function retryDiscovery() {
+    for (const name of [...pendingDiscovery]) {
+      const provider = providers[name];
+      if (provider) await discover(name, provider);
+      else pendingDiscovery.delete(name);
     }
   }
 
@@ -146,7 +174,7 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
     const t = now();
     const planned = new Map([...pools.keys()].map(n => [n, 0]));
     const assigned = new Map([...pools.keys()].map(n => [n, 0]));
-    const room = pool => alive(pool).length + planned.get(pool.name) < pool.max
+    const room = pool => count(pool, 'creating', 'booting', 'ready', 'draining', 'removing') + planned.get(pool.name) < pool.max
       && totalAlive() + [...planned.values()].reduce((a, b) => a + b, 0) < autoscale.maxWorkers;
 
     // Queued jobs that have waited go to the first pool that could run them. A worker that is
@@ -154,7 +182,7 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
     for (const job of view.queue()) {
       if (job.waitedMs < autoscale.scaleUpAfter) continue;
       for (const pool of pools.values()) {
-        if (!canServe(pool, job.spec) || t < pool.backoffUntil) continue;
+        if (pendingDiscovery.has(pool.name) || !canServe(pool, job.spec) || t < pool.backoffUntil) continue;
         const coverage = (count(pool, 'creating', 'booting') + planned.get(pool.name)) * slotsPerWorker(pool);
         if (assigned.get(pool.name) < coverage) {
           assigned.set(pool.name, assigned.get(pool.name) + 1);
@@ -170,7 +198,7 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
 
     const creating = [];
     for (const pool of pools.values()) {
-      if (t < pool.backoffUntil) continue;
+      if (pendingDiscovery.has(pool.name) || t < pool.backoffUntil) continue;
       const missingMin = pool.min - alive(pool).length;
       const toStart = Math.min(Math.max(planned.get(pool.name), missingMin), pool.maxConcurrentCreates);
       for (let i = 0; i < toStart; i++) creating.push(create(pool));
@@ -230,6 +258,7 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
     if (ticking || stopped) return;
     ticking = true;
     try {
+      await retryDiscovery();
       sync();
       await retryRemovals();
       await scaleUp();
@@ -245,20 +274,7 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
   return {
     /** Adopts instances that survived an orchestrator restart, then starts ticking. */
     async start() {
-      for (const [name, provider] of Object.entries(providers)) {
-        let found = [];
-        try {
-          found = await provider.list(autoscale.id);
-        } catch (err) {
-          log(`autoscaler: could not list existing instances of pool ${name}: ${err.message}`);
-        }
-        for (const f of found) {
-          if (instances.has(f.workerId)) continue;
-          // A pool's workers belong to that pool even if the listing came from a shared provider.
-          instances.set(f.workerId, { id: f.workerId, pool: f.pool, provider, providerId: f.providerId, state: 'booting', createdAt: f.createdAt ?? now(), idleSince: null, adopted: true });
-          log(`autoscaler: found worker ${f.workerId} from before the restart in pool ${f.pool}`);
-        }
-      }
+      for (const [name, provider] of Object.entries(providers)) await discover(name, provider);
       stopped = false;
       await tick();
       timer = setInterval(tick, autoscale.interval);

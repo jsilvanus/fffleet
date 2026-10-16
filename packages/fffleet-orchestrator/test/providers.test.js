@@ -8,7 +8,7 @@ import { createDockerProvider, dockerTarget } from '../src/providers/docker.js';
 const poolOf = (provider, block, extra = {}) => normalizeConfig({ publicUrl: 'http://orch:5000', pools: [{ name: 'p', provider, [provider]: block, ...extra }] }, {}).pools[0];
 
 /** A fake Hetzner Cloud API: servers with labels, pagination, and optional 429s. */
-async function fakeHetzner() {
+async function fakeHetzner({ failCreateAfterPersist = false } = {}) {
   const servers = [];
   const seen = [];
   let nextId = 100;
@@ -31,6 +31,10 @@ async function fakeHetzner() {
       if (req.method === 'POST' && url.pathname === '/servers') {
         const s = { id: nextId++, labels: body.labels, created: new Date().toISOString() };
         servers.push(s);
+        if (failCreateAfterPersist) {
+          failCreateAfterPersist = false;
+          return send(500, { error: { code: 'internal_error', message: 'response lost after create' } });
+        }
         return send(201, { server: s });
       }
       if (req.method === 'GET' && url.pathname === '/servers') {
@@ -178,4 +182,22 @@ test('docker targets', () => {
   assert.deepEqual(dockerTarget(undefined), { socketPath: '/var/run/docker.sock' });
   assert.deepEqual(dockerTarget('unix:///run/d.sock'), { socketPath: '/run/d.sock' });
   assert.deepEqual(dockerTarget('tcp://dock:2376'), { host: 'dock', port: 2376 });
+});
+
+
+test('hetzner: an ambiguous server-create 5xx is not blindly retried', async () => {
+  const api = await fakeHetzner({ failCreateAfterPersist: true });
+  try {
+    const h = createHetznerProvider({
+      pool: poolOf('hetzner', { token: 't', serverType: 'x', baseUrl: api.url }),
+      retryDelayMs: 1,
+    });
+    await assert.rejects(
+      h.create({ workerId: 'p-ambiguous', env: {}, labels: { 'fffleet.worker': 'p-ambiguous' } }),
+      /HTTP 500 internal_error response lost after create/,
+    );
+    assert.equal(api.servers.length, 1, 'do not issue another non-idempotent create after an ambiguous 5xx');
+  } finally {
+    await api.close();
+  }
 });

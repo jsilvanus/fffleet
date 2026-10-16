@@ -41,6 +41,24 @@ jobs:
       - name: End-to-end tests (orchestrator + two workers streaming)
         run: npm run test:e2e
 
+  isolated-runtime:
+    name: Podman isolated runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install Podman
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends podman
+      - run: npm ci
+      - name: Exercise isolated runtime on tmpfs
+        run: node --test packages/fffleet/test/isolated-runtime.integration.test.js
+        env:
+          FFFLEET_TEST_PODMAN: '1'
+
   # Windows is supported for running workers and the orchestrator on a spare PC. This job reports
   # whether the tests pass there; it does not block merging while the support is new.
   windows:

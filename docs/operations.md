@@ -24,11 +24,11 @@ apps ──(TLS, token)──▶ orchestrator ──(private network, worker tok
    FFFLEET_CLIENTS_FILE=/data/clients.json      # the apps that may log in
    FFFLEET_STATE_FILE=/data/state.db            # queued and running jobs survive restarts (Node 22.13+; the image has it)
    ```
-   The signing key also lets workers the autoscaler started before a restart rejoin. Back up `/data`: the key and the clients file are the only state that cannot be recreated.
+   The signing key also lets workers the autoscaler started before a restart rejoin. Back up `/data`: the key and clients file preserve identity and access, while `state.db` preserves job records and restart recovery. Losing the state file means the orchestrator no longer knows those jobs. State-save errors are logged rather than stopping job processing, so alert on those logs.
 3. **Add each app.** `npx fffleet-orchestrator add-client video-app --scope jobs` prints the secret once. Add a `metrics` client for Prometheus. Remove an app by deleting it from the clients file; its tokens stop working within a second.
 4. **Start workers.** Set `FFFLEET_ORCHESTRATOR_URL`, `FFFLEET_WORKER_TOKEN`, a stable `FFFLEET_WORKER_ID`, `FFFLEET_ADVERTISE_URL` (how the orchestrator reaches the worker) and slots. `FFFLEET_CAPABILITIES=mount:/media` marks workers that share a mount, so jobs that need it `requires` it.
 5. **Storage.** Give workers S3 credentials (`AWS_*`, `FFFLEET_S3_ENDPOINT` for S3-compatible stores) and use `s3://` inputs and outputs, so no worker needs the others' disks. Set `FFFLEET_CACHE_DIR` on workers that read the same large sources repeatedly.
-6. **Autoscaling (optional).** Point `FFFLEET_CONFIG` at a pools file (see the README). Free capacity first, paid capacity last. Set `autoscale.joinSecret` or keep the signing key, and make the orchestrator reachable at `publicUrl` from new workers.
+6. **Autoscaling (optional).** Point `FFFLEET_CONFIG` at a pools file (see the README). Free capacity first, paid capacity last. Set `autoscale.joinSecret` or keep the signing key, and make the orchestrator reachable at `publicUrl` from new workers. If provider discovery fails, the affected pool pauses scale-up until discovery succeeds; check provider API credentials, reachability, and orchestrator logs before intervening manually.
 7. **Watch it.** Scrape the orchestrator and use `/v1/sd/prometheus` for the workers (README, "Metrics"). Alerts worth having:
    - `fffleet_queue_length` above zero for longer than a job should wait;
    - `increase(fffleet_workers_lost_total[10m]) > 0`;
@@ -57,7 +57,7 @@ Without a state file the orchestrator forgets all of them; workers keep running 
 | You see | Usually |
 |---|---|
 | Job stays `queued` | No worker has a free slot in the job's class, the right `kind`, or every capability in `requires` (`GET /v1/workers`, `GET /v1/capabilities`). An `s3://` job needs a worker with S3 credentials. |
-| `WORKER_LOST` | The worker missed its heartbeats (`FFFLEET_HEARTBEAT_TIMEOUT_MS`, 15 s), restarted, or lost the job. Check the worker's logs and the network between the two. |
+| `WORKER_LOST` | The worker missed its heartbeats (`FFFLEET_HEARTBEAT_TIMEOUT_MS`, 15 s), restarted, or lost the job. Check the worker's logs and the network between the two. The actual outcome may be unknown; a lost dispatch response can mean the worker is still running a job that has been requeued elsewhere. |
 | `DISPATCH_REJECTED` | The worker refused the spec (unknown job type, unsupported scheme, kind not accepted). The message says why. |
 | `FFMPEG_EXIT` | ffmpeg itself failed. `stderrTail` on the job has its last lines. Running jobs show the newest lines as they appear (`job.on('stderr', ...)`, `stderrTail` in the snapshot), which helps with stream jobs that never exit. |
 | `INPUT_FAILED`, `UPLOAD_FAILED`, `OUTPUT_MISSING` | Staging: the URL, credentials or disk space. |

@@ -5,7 +5,7 @@ How fffleet is put together, and why. For the wire format see [the job contract]
 ## Goals
 
 - **One way to run an ffmpeg job**, whether it runs in your process, on a worker, or somewhere in a pool. An application changes one setting (`FFFLEET_URL`), not its code.
-- **Nothing is lost when the fleet is away.** The client falls back to running the job locally.
+- **Local-first availability is optional, not exactly-once execution.** The client can fall back to running a job locally when the fleet is unavailable, but an ambiguous remote submission can result in duplicate execution. Durable orchestrator job recovery also requires `FFFLEET_STATE_FILE` (or a custom store).
 - **No dependencies.** Every package is plain ESM on Node 20+; the only external programs are `ffmpeg` and `ffprobe` on the machines that run jobs.
 - **Generic.** fffleet knows about jobs, endpoints and capabilities, not about what the jobs are for.
 
@@ -38,7 +38,7 @@ A worker, an orchestrator and a test double all serve the same `/v1/jobs` API fr
 ## A job's life
 
 1. **Validate.** `parseSpec` checks the spec and fills in defaults (`class: 'default'`, `priority: 0`, `type: 'ffmpeg'`, …). The client does this before sending anything; every server does it again.
-2. **Identify.** The client picks the job id (`job_<uuid>` unless you set one). Submitting the same id with the same spec returns the existing job (HTTP 200); a different spec under that id is a 409. This is what makes retries safe.
+2. **Identify.** The client picks the job id (`job_<uuid>` unless you set one). Submitting the same id with the same spec returns the existing job (HTTP 200); a different spec under that id is a 409. This prevents duplicate acceptance while that job record is retained by that server/store. It is not an exactly-once guarantee across local fallback, record pruning, or a restart without persistent orchestrator state.
 3. **Queue.** `queued`. The queue is ordered by `priority`, then age. The orchestrator holds the fleet-wide queue; a worker holds its own (`maxQueued`, default 1000, then 503).
 4. **Place** (orchestrator only, `assigned`). A worker *fits* a job if it is not draining or cooling down, accepts the job's `kind`, has a free slot in the job's class pool, and reports every capability the job needs. Candidates are ordered by load (used slots / total) and the least loaded wins. A queue entry that fits nowhere does not block the ones behind it.
 5. **Stage** (`staging`, batch jobs with http(s) or s3 inputs). Inputs are downloaded into a private work directory; with a worker cache (`FFFLEET_CACHE_DIR`) the file is reused when its ETag matches.
@@ -62,13 +62,14 @@ Capabilities are plain strings. A worker reports what it detects (`type:ffmpeg`,
 |---|---|
 | Worker stops sending heartbeats (`FFFLEET_HEARTBEAT_TIMEOUT_MS`, 15 s) | Dropped; its unfinished jobs fail with `WORKER_LOST`. |
 | Heartbeat no longer lists a dispatched job (worker restarted) | That job fails with `WORKER_LOST` after a short grace (`lostJobGraceMs`, 10 s). |
-| Worker answers a dispatch with 5xx | No new jobs for `dispatchCooldownMs` (5 s); the job goes back to the queue. |
-| Worker unreachable on dispatch | The worker is dropped until it re-registers; the job goes back to the queue. |
+| Worker answers a dispatch with 5xx | No new jobs for `dispatchCooldownMs` (5 s); the job goes back to the queue. If the worker started the job before its error response, execution may be duplicated on another worker. |
+| Worker unreachable on dispatch | The worker is dropped until it re-registers; the job goes back to the queue. If the worker accepted the job but the response was lost, it may keep running while another worker receives the requeued job. |
 | Worker answers a dispatch with 4xx | The job fails with `DISPATCH_REJECTED`. |
 | Orchestrator restarts, **with** `FFFLEET_STATE_FILE` | Queued jobs return to the queue; running batch jobs are adopted when their worker reports them (or fail with `ORCHESTRATOR_RESTARTED` after `FFFLEET_ADOPT_GRACE_MS`); running stream jobs fail. |
 | Orchestrator restarts, without a state file | All jobs are forgotten; workers finish what they run, unobserved. |
 | Fleet unreachable (client) | With `fallback: 'local'` (default) the job runs in the app's process. See the caveat in [security.md](security.md#known-limitations). |
 | Event stream drops (client) | Reconnects with `Last-Event-ID` and resumes after the last event it saw; up to 5 consecutive failures. |
+| Cancellation cannot reach a worker | The orchestrator records `cancelled` and releases the slot, but the remote process may continue. Treat cancellation as best-effort if the worker is unreachable. |
 
 Event history per job is capped (500 events, always keeping the first and the final one). Finished jobs are remembered for status and idempotency (the newest 1000).
 
@@ -78,9 +79,9 @@ Given a config file the orchestrator runs a control loop (every `autoscale.inter
 
 1. **Sync** instances with registered workers: booting → ready on registration; booting too long → removed with backoff; ready but no longer registered → removed.
 2. **Scale up.** A queued job that has waited `scaleUpAfter` goes to the first pool (in file order) that *could* serve it (`kinds`, capabilities including those observed from its running workers). Workers already on the way cover their share of waiting jobs; only the rest start new ones, bounded by the pool's `max`, `maxConcurrentCreates`, and `autoscale.maxWorkers`. A pool below its `min` is topped up.
-3. **Scale down.** A worker idle for `idleAfter` (and not needed by any queued job) is drained and removed, down to the pool's `min`. Providers with hourly billing (Hetzner) only remove near the end of the paid hour.
+3. **Scale down.** A worker idle for `idleAfter` (and not needed by any queued job) is drained and removed, down to the pool's `min`. Providers with hourly billing (Hetzner) only remove near the end of the paid hour. Failed removals are retried; while removal is pending, the instance still counts against pool and global worker limits.
 
-Providers implement `list / create / destroy`: `process` (child processes, loopback), `docker` (Engine API on a socket or tcp), `hetzner` (Cloud API plus cloud-init that runs the worker image). Every instance is labelled with the orchestrator's `autoscale.id` and pool, so a restarted orchestrator **adopts** survivors and deletes strays instead of leaking paid servers.
+Providers implement `list / create / destroy`: `process` (child processes, loopback), `docker` (Engine API on a socket or tcp), `hetzner` (Cloud API plus cloud-init that runs the worker image). Every instance is labelled with the orchestrator's `autoscale.id` and pool, so a restarted orchestrator **adopts** survivors and removes instances that do not re-register. If a provider listing fails, discovery is retried and that pool does not scale up while its existing instances are unknown. A provider create request can also fail after the provider has created the instance; the autoscaler reconciles by labels before retrying, reducing the risk of an untracked paid server.
 
 New workers get their own **join secret**: an HMAC of the worker id under a key only the orchestrator holds (`autoscale.joinSecret`, or the signing key file). It lets that worker register under its own id and be called back; it is not the shared worker token, and nothing needs storing to recognise it again after a restart.
 
@@ -96,11 +97,15 @@ Workers fetch the orchestrator's public keys (`GET /v1/auth/keys`) and accept th
 
 ## Storage
 
-fffleet stores no media. Endpoints are URIs: `file:` on a shared mount (placed with a `mount:` capability), `http(s):` (PUT for outputs), `s3://` with a built-in SigV4 client (single PUT under 16 MB, multipart above; downloads use `node:http(s)` because Node 24's undici can assert on a paused body when the server closes the connection), and live schemes passed through to ffmpeg. The orchestrator's only persistent state is the optional SQLite file (job records, `node:sqlite`, Node 22.13+), the signing key and the clients file.
+fffleet stores no media. Endpoints are URIs: `file:` on a shared mount (placed with a `mount:` capability), `http(s):` (PUT for outputs), `s3://` with a built-in SigV4 client (single PUT under 16 MB, multipart above; downloads use `node:http(s)` because Node 24's undici can assert on a paused body when the server closes the connection), and live schemes passed through to ffmpeg. The orchestrator's persistent state is the optional SQLite file (job records, `node:sqlite`, Node 22.13+), the signing key and the clients file. Store write errors are logged and do not stop job processing, so configure log alerts and do not treat a configured state file as proof that every update was saved.
 
 ## Observability
 
 Both servers serve `GET /metrics` (Prometheus text). The orchestrator reports the fleet (workers, slots, queue length by class, jobs by owner/class/state, wait and run histograms, dispatch failures, lost workers, autoscaler instances); each worker reports itself (slots, per-job speed and fps, ffmpeg CPU and memory, transfer bytes, host load). Workers are *not* proxied through the orchestrator: `GET /v1/sd/prometheus` lists them as HTTP service-discovery targets, so a dead worker shows as `up == 0`.
+
+## Isolated development workspaces
+
+The proposed integration direction for interactive development sessions, S3-backed workspace snapshots, scoped object transfers, and recovery is documented in [isolated-development-workspaces.md](isolated-development-workspaces.md). This is an architecture proposal, not a claim that fffleet already implements a general workspace/session API.
 
 ## Extending
 

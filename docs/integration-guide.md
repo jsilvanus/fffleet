@@ -47,9 +47,9 @@ Use `validateSpec(spec)` from `fffleet` in your own tests to check specs without
 
 ## Idempotency and retries
 
-The server remembers a job by id. Submitting the same id with an identical spec returns the existing job (200) and never starts it twice; a different spec under the same id is `409 ID_CONFLICT`. So:
+The server remembers a job by id while its record is retained. Submitting the same id with an identical spec returns the existing job (200) instead of accepting it again; a different spec under the same id is `409 ID_CONFLICT`. This is not a global exactly-once guarantee: records can be pruned, an orchestrator without `FFFLEET_STATE_FILE` forgets them on restart, local fallback after an ambiguous remote submission can execute the same work twice, and an ambiguous worker-dispatch failure can make the orchestrator requeue work that the first worker may already have started. So:
 
-- **Derive ids from your own entity**, e.g. `render-<projectId>-<revision>`. A crashed app that resubmits after restart reattaches to the running job instead of duplicating it.
+- **Derive ids from your own entity**, e.g. `render-<projectId>-<revision>`. A crashed app can reattach to a retained job after restart only if the orchestrator's job state is persistent (`FFFLEET_STATE_FILE` or a custom store) and the record has not been pruned.
 - To rerun a finished job, change the id (add an attempt counter). A finished job is remembered for status until it falls out of the newest 1000.
 - Ids are one namespace for the whole orchestrator, not per app. Two apps picking the same id see a 409 even though they cannot see each other's jobs; prefix ids with your app's name.
 
@@ -69,7 +69,8 @@ await job.cancel();                                 // DELETE /v1/jobs/:id
 - Remote events are Server-Sent Events with sequence numbers; the client reconnects with `Last-Event-ID` and resumes. `done` **rejects** only if the event stream is lost for good (the fleet is gone); treat that as "state unknown", and look the job up again by id after the fleet is back (submit the same spec, or `GET /v1/jobs/:id`).
 - `handle.where` is `'local'` or `'remote'`, so you can log where a job actually ran, including after a fallback.
 - Error `code`s you will see: `FFMPEG_EXIT`, `INPUT_FAILED`, `UPLOAD_FAILED`, `OUTPUT_MISSING`, `TIMEOUT`, `CANCELLED`, `WORKER_LOST`, `DISPATCH_REJECTED`, `ORCHESTRATOR_RESTARTED`, `INVALID_SPEC`, `UNSUPPORTED_TYPE|KIND|SCHEME`, `SPAWN_FAILED`. Submission-time errors (`QUEUE_FULL` 503, `ID_CONFLICT` 409, `INVALID_SPEC` 422, `UNAUTHORIZED` 401, `FORBIDDEN` 403) are thrown by `submit` as `FleetError` with `.code` and `.status`.
-- `WORKER_LOST` and `ORCHESTRATOR_RESTARTED` mean "I do not know whether it finished". Safe jobs (idempotent outputs) can simply be resubmitted under a new id.
+- `WORKER_LOST` and `ORCHESTRATOR_RESTARTED` mean "I do not know whether it finished". Safe jobs (idempotent outputs) can be resubmitted, but choose the id deliberately: a new id requests a new execution and can duplicate side effects.
+- `job.cancel()` asks the fleet to stop the job. If the orchestrator cannot reach the worker, it can record `cancelled` without confirming that the remote process stopped. Do not treat cancellation during a network partition as proof that external side effects ceased.
 
 ## Getting media to and from workers
 
