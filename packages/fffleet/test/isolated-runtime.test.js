@@ -27,6 +27,7 @@ test('isolated runtime rejects malformed args, users and environment values', as
   const base = { image: 'example/image:1', command: 'true', workDir: '/not-used' };
   await assert.rejects(runIsolatedCommand({ ...base, args: [1] }), /array of strings/);
   await assert.rejects(runIsolatedCommand({ ...base, user: 'root' }), /numeric UID:GID/);
+  await assert.rejects(runIsolatedCommand({ ...base, user: '0:0' }), /non-root numeric UID:GID/);
   await assert.rejects(runIsolatedCommand({ ...base, env: { BAD: 'line\nbreak' } }), /invalid isolated environment variable/);
   await assert.rejects(runIsolatedCommand({ ...base, env: { AWS_SECRET_ACCESS_KEY: 'should-not-pass' } }), /invalid isolated environment variable/);
 });
