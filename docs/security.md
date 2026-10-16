@@ -29,6 +29,7 @@ The `runIsolatedCommand()` helper is an opt-in primitive for a trusted custom ex
 Important limits:
 
 - The caller must authorize and stage inputs, choose trusted/pinned images and commands, and publish or upload outputs. The helper does not grant tenant-scoped S3 access or provide checkpoint semantics.
+- Do not use a persistent `FFFLEET_CACHE_DIR` for jobs routed through this helper; the custom executor must stage data into the job's tmpfs-backed `workDir` using trusted transfer code.
 - Only regular files are transferred; symlinks and special files are excluded. The image needs `/bin/sh`, `sleep` and `find`.
 - CI has a Podman integration test for basic execution, file transfer, tmpfs/no-swap enforcement and symlink exclusion. Cancellation, resource-limit enforcement, transfer-size exhaustion and cleanup during runtime failures still need more coverage. Do not treat the helper as production-certified until those cases are tested.
 - Rootless Podman is preferred. Docker's daemon remains a high-privilege boundary, and neither runtime prevents kernel/runtime vulnerabilities.
