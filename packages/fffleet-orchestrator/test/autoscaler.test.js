@@ -403,7 +403,7 @@ test('ambiguous provider create failure reconciles a server found by label befor
 });
 
 
-test('a worker whose destroy keeps failing still counts against maxWorkers and pool max', async () => {
+test('a worker whose destroy keeps failing still counts against the pool max', async () => {
   const w = world([pool('p', { min: 0, max: 1, slots: 'default=1' })]);
   w.job();
   w.advance(11_000);
@@ -433,5 +433,31 @@ test('a pool with failed discovery is skipped in favor of another eligible pool'
 
   await w.scaler.start();
   assert.deepEqual(w.created.map(x => x.pool), ['local']);
+  await w.scaler.stop();
+});
+
+
+test('an instance awaiting removal still counts against the global maxWorkers limit', async () => {
+  const w = world(
+    [pool('p', { min: 0, max: 1, slots: 'default=1' }), pool('q', { min: 0, max: 1, slots: 'default=1' })],
+    { autoscale: { maxWorkers: 1 } },
+  );
+  w.job();
+  w.advance(11_000);
+  await w.scaler.tick();
+  assert.equal(w.created[0].pool, 'p');
+  w.register(0);
+  w.queue.length = 0;
+  await w.scaler.tick();
+
+  w.providers.p.destroy = async () => { throw new Error('provider API unavailable'); };
+  w.advance(6 * 60_000);
+  await w.scaler.tick();
+  assert.equal(w.scaler.describe().pools[0].workers[0].state, 'removing');
+
+  w.job();
+  w.advance(11_000);
+  await w.scaler.tick();
+  assert.equal(w.created.length, 1, 'a second pool must not exceed the global limit while removal is unconfirmed');
   await w.scaler.stop();
 });
