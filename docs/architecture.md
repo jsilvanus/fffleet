@@ -5,7 +5,7 @@ How fffleet is put together, and why. For the wire format see [the job contract]
 ## Goals
 
 - **One way to run an ffmpeg job**, whether it runs in your process, on a worker, or somewhere in a pool. An application changes one setting (`FFFLEET_URL`), not its code.
-- **Nothing is lost when the fleet is away.** The client falls back to running the job locally.
+- **Local-first availability is optional, not exactly-once execution.** The client can fall back to running a job locally when the fleet is unavailable, but an ambiguous remote submission can result in duplicate execution. Durable orchestrator job recovery also requires `FFFLEET_STATE_FILE` (or a custom store).
 - **No dependencies.** Every package is plain ESM on Node 20+; the only external programs are `ffmpeg` and `ffprobe` on the machines that run jobs.
 - **Generic.** fffleet knows about jobs, endpoints and capabilities, not about what the jobs are for.
 
@@ -38,7 +38,7 @@ A worker, an orchestrator and a test double all serve the same `/v1/jobs` API fr
 ## A job's life
 
 1. **Validate.** `parseSpec` checks the spec and fills in defaults (`class: 'default'`, `priority: 0`, `type: 'ffmpeg'`, …). The client does this before sending anything; every server does it again.
-2. **Identify.** The client picks the job id (`job_<uuid>` unless you set one). Submitting the same id with the same spec returns the existing job (HTTP 200); a different spec under that id is a 409. This is what makes retries safe.
+2. **Identify.** The client picks the job id (`job_<uuid>` unless you set one). Submitting the same id with the same spec returns the existing job (HTTP 200); a different spec under that id is a 409. This prevents duplicate acceptance while that job record is retained by that server/store. It is not an exactly-once guarantee across local fallback, record pruning, or a restart without persistent orchestrator state.
 3. **Queue.** `queued`. The queue is ordered by `priority`, then age. The orchestrator holds the fleet-wide queue; a worker holds its own (`maxQueued`, default 1000, then 503).
 4. **Place** (orchestrator only, `assigned`). A worker *fits* a job if it is not draining or cooling down, accepts the job's `kind`, has a free slot in the job's class pool, and reports every capability the job needs. Candidates are ordered by load (used slots / total) and the least loaded wins. A queue entry that fits nowhere does not block the ones behind it.
 5. **Stage** (`staging`, batch jobs with http(s) or s3 inputs). Inputs are downloaded into a private work directory; with a worker cache (`FFFLEET_CACHE_DIR`) the file is reused when its ETag matches.
