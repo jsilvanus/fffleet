@@ -38,7 +38,7 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
 
   const alive = pool => [...instances.values()].filter(i => i.pool === pool.name && i.state !== 'removing');
   const count = (pool, ...states) => [...instances.values()].filter(i => i.pool === pool.name && states.includes(i.state)).length;
-  const totalAlive = () => [...instances.values()].filter(i => i.state !== 'removing').length;
+  const totalAlive = () => instances.size;
 
   /** What a worker of this pool can do: what the config declares plus what its running workers reported. */
   function poolCaps(pool) {
@@ -174,7 +174,7 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
     const t = now();
     const planned = new Map([...pools.keys()].map(n => [n, 0]));
     const assigned = new Map([...pools.keys()].map(n => [n, 0]));
-    const room = pool => alive(pool).length + planned.get(pool.name) < pool.max
+    const room = pool => count(pool, 'creating', 'booting', 'ready', 'draining', 'removing') + planned.get(pool.name) < pool.max
       && totalAlive() + [...planned.values()].reduce((a, b) => a + b, 0) < autoscale.maxWorkers;
 
     // Queued jobs that have waited go to the first pool that could run them. A worker that is
