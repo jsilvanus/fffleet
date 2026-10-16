@@ -423,3 +423,15 @@ test('a worker whose destroy keeps failing still counts against maxWorkers and p
   assert.equal(w.created.length, 1, 'do not exceed pool/global limits while the old instance may still exist');
   await w.scaler.stop();
 });
+
+
+test('a pool with failed discovery is skipped in favor of another eligible pool', async () => {
+  const w = world([pool('cloud', { max: 2 }), pool('local', { max: 2 })]);
+  w.job();
+  w.advance(11_000);
+  w.providers.cloud.list = async () => { throw new Error('provider API unavailable'); };
+
+  await w.scaler.start();
+  assert.deepEqual(w.created.map(x => x.pool), ['local']);
+  await w.scaler.stop();
+});
