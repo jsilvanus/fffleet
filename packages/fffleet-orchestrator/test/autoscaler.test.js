@@ -334,3 +334,44 @@ test('exited() marks a process worker for removal', async () => {
   await w.scaler.tick();
   assert.equal(w.destroyed.length, 1);
 });
+
+
+test('failed provider discovery is retried and does not scale up over an undiscovered instance', async () => {
+  const w = world([pool('cloud', { max: 2, slots: 'default=2' })]);
+  w.job();
+  w.advance(11_000);
+  w.providers.cloud.existing = [
+    { providerId: 'old-server', workerId: 'cloud-aaaaaa', pool: 'cloud', createdAt: 1_000_000 - 30_000 },
+  ];
+  const list = w.providers.cloud.list;
+  let attempts = 0;
+  w.providers.cloud.list = async function (...args) {
+    attempts++;
+    if (attempts <= 2) throw new Error('temporary API failure');
+    return list.apply(this, args);
+  };
+
+  await w.scaler.start();
+  assert.equal(w.created.length, 0, 'a failed listing must not trigger replacement creation');
+  assert.match(w.log.join('\n'), /will retry discovery/);
+
+  await w.scaler.tick();
+  assert.equal(attempts, 3, 'the next tick retries discovery');
+  assert.equal(w.created.length, 0, 'the discovered worker covers the queued job');
+  assert.equal(w.scaler.describe().pools[0].workers.some(x => x.id === 'cloud-aaaaaa'), true);
+
+  await w.scaler.stop();
+});
+
+test('a pool with persistently failing provider discovery is not scaled up', async () => {
+  const w = world([pool('cloud', { max: 2 })]);
+  w.job();
+  w.advance(11_000);
+  w.providers.cloud.list = async () => { throw new Error('provider API unavailable'); };
+
+  await w.scaler.start();
+  await w.scaler.tick();
+  assert.equal(w.created.length, 0, 'do not create untracked replacements while discovery is unavailable');
+  assert.match(w.log.join('\n'), /will retry discovery/);
+  await w.scaler.stop();
+});
