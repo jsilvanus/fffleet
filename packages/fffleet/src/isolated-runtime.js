@@ -49,7 +49,10 @@ export async function runIsolatedCommand({
   if (typeof image !== 'string' || !image.trim()) throw new Error('an explicit trusted image is required');
   if (typeof command !== 'string' || !command.trim()) throw new Error('an explicit command is required');
   if (!Array.isArray(args) || args.some(a => typeof a !== 'string')) throw new Error('args must be an array of strings');
-  if (!SAFE_USER.test(user)) throw new Error('user must be a numeric UID:GID pair');
+  const [uid, gid] = typeof user === 'string' ? user.split(':').map(Number) : [];
+  if (!SAFE_USER.test(user) || !Number.isInteger(uid) || uid < 1 || !Number.isInteger(gid) || gid < 0) {
+    throw new Error('user must be a non-root numeric UID:GID pair');
+  }
   for (const [key, value] of Object.entries(env)) {
     if (!SAFE_ENV.test(key) || SENSITIVE_ENV.test(key) || typeof value !== 'string' || /[\0\r\n]/.test(value)) {
       throw new Error(`invalid isolated environment variable ${key}`);
