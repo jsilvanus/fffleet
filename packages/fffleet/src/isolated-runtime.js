@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdir, realpath, rm, statfs } from 'node:fs/promises';
+import { mkdir, readdir, realpath, rm, statfs } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 
@@ -155,31 +155,16 @@ async function checkedChildDir(root, name) {
 async function listRelativeFiles(root) {
   const files = [];
   async function walk(dir, prefix = '') {
-    const { readdir, lstat } = await import('node:fs/promises');
     for (const entry of await readdir(dir, { withFileTypes: true })) {
       const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
       const full = resolve(dir, entry.name);
       if (entry.isDirectory()) await walk(full, rel);
-      else if (entry.isFile() && (await lstat(full)).isFile()) files.push(rel);
+      else if (entry.isFile()) files.push(rel);
       // Symlinks and special files are intentionally not returned.
     }
   }
   await walk(root);
   return files.sort();
-}
-
-function captureTool(command, args, { cwd, signal } = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, signal, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', chunk => { stdout += chunk.toString(); });
-    child.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-STDERR_LIMIT); });
-    child.once('error', reject);
-    child.once('close', code => code === 0
-      ? resolve({ stdout, stderr })
-      : reject(new Error(`${command} failed with exit code ${code}: ${stderr.trim()}`)));
-  });
 }
 
 function runTool(command, args, { signal, allowNonZero = false, onStdout = () => {}, onStderr = () => {} } = {}) {
@@ -217,7 +202,7 @@ async function transferIntoContainer(runtime, name, inputDir, signal, onOutput) 
 }
 
 async function transferOutOfContainer(runtime, name, outputDir, signal, onOutput) {
-  const exportScript = 'cd /work/out && find . -type f -print0 | tar --null -T - -cf -';
+  const exportScript = 'cd /work/out && find . -type f -print0 > /tmp/fffleet-files && tar --null -T /tmp/fffleet-files -cf -';
   const pack = spawn(runtime, ['exec', name, '/bin/sh', '-c', exportScript], { stdio: ['ignore', 'pipe', 'pipe'], signal });
   const unpack = spawn('tar', ['--no-same-owner', '--no-same-permissions', '-xf', '-', '-C', outputDir], { stdio: ['pipe', 'ignore', 'pipe'], signal });
   const errors = [];
