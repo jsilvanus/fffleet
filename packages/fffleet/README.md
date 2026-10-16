@@ -1,6 +1,6 @@
 # fffleet
 
-Run ffmpeg jobs on this machine, on an [fffleet worker](https://www.npmjs.com/package/fffleet-worker), or across a pool behind an [fffleet orchestrator](https://www.npmjs.com/package/fffleet-orchestrator), with the same code. It has no dependencies and needs Node.js 20 or newer, plus `ffmpeg` on the machine that runs the job.
+Run ffmpeg jobs on this machine, on an [fffleet worker](https://www.npmjs.com/package/fffleet-worker), or across a pool behind an [fffleet orchestrator](https://www.npmjs.com/package/fffleet-orchestrator), with the same code. The core package has no npm dependencies and needs Node.js 20 or newer, plus `ffmpeg` on the machine that runs the job. The optional isolated runtime also needs Podman (preferred) or Docker, plus Linux tmpfs with host swap disabled.
 
 ```js
 import { createFleet } from 'fffleet';
