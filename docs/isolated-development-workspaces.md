@@ -34,7 +34,7 @@ The `fffleet` package exports `runIsolatedCommand()`. It is intended to be calle
 - **Explicit environment:** only variables passed in `env` are added to the execution process; host environment variables and credentials are not automatically forwarded.
 - **Transfers:** the caller stages approved inputs under `workDir/in` and receives regular files under `workDir/out`. The helper does not perform S3 synchronization or decide which objects a tenant is authorized to access.
 
-This is a first runtime primitive, not proof of a complete security boundary. It has unit coverage for validation and fail-closed tmpfs detection, but the current CI does not yet run a real Podman/Docker integration test. A production integration should add runtime-enabled tests for teardown, cancellation, limits, transfer integrity, and attempts to escape the output tree. Use rootless Podman where possible; Docker's daemon/socket is a high-privilege boundary and should not be exposed to untrusted jobs.
+This is a first runtime primitive, not proof of a complete security boundary. CI now has an opt-in Podman integration job that checks file transfer, symlink exclusion, tmpfs enforcement and basic container execution. More coverage is still needed for cancellation, resource-limit enforcement, transfer-size exhaustion and teardown under runtime failure. Use rootless Podman where possible; Docker's daemon/socket is a high-privilege boundary and should not be exposed to untrusted jobs.
 
 ## Workspace and object-storage model
 
