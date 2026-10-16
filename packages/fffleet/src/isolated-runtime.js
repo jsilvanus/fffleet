@@ -79,11 +79,12 @@ export async function runIsolatedCommand({
   const pids = Number(limits.pids ?? 128);
   const workSize = limits.workSize ?? '1g';
   const tmpSize = limits.tmpSize ?? '256m';
-  if (!/^\d+(?:[kmg])?$/i.test(memory) || !/^\d+(?:[kmg])?$/i.test(workSize) || !/^\d+(?:[kmg])?$/i.test(tmpSize)) {
-    throw new Error('memory, workSize and tmpSize must be numeric sizes such as 512m or 2g');
-  }
-  if (!Number.isFinite(cpus) || cpus <= 0 || cpus > 256 || !Number.isInteger(pids) || pids < 1 || pids > 65536) {
-    throw new Error('invalid isolated execution resource limits');
+  const memoryBytes = sizeBytes(memory, 'memory', 64 * 1024 ** 3);
+  const workBytes = sizeBytes(workSize, 'workSize', 64 * 1024 ** 3);
+  sizeBytes(tmpSize, 'tmpSize', 16 * 1024 ** 3);
+  if (workBytes > memoryBytes) throw new Error('workSize cannot exceed the container memory limit');
+  if (!Number.isFinite(cpus) || cpus <= 0 || cpus > 64 || !Number.isInteger(pids) || pids < 1 || pids > 8192) {
+    throw new Error('invalid isolated execution resource limits (cpus must be <=64; pids must be <=8192)');
   }
 
   const createArgs = [
@@ -143,6 +144,17 @@ async function isSwapDisabled() {
   } catch {
     return false;
   }
+}
+
+function sizeBytes(value, name, maxBytes) {
+  const match = String(value).match(/^(\\d+)([kmg])?$/i);
+  if (!match) throw new Error(`${name} must be a numeric size such as 512m or 2g`);
+  const multiplier = { k: 1024, m: 1024 ** 2, g: 1024 ** 3 }[(match[2] ?? '').toLowerCase()] ?? 1;
+  const bytes = Number(match[1]) * multiplier;
+  if (!Number.isSafeInteger(bytes) || bytes < 1 || bytes > maxBytes) {
+    throw new Error(`${name} is outside the allowed size range`);
+  }
+  return bytes;
 }
 
 /** Linux tmpfs check; unknown/unsupported filesystems fail closed. */
