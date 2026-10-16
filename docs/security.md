@@ -22,6 +22,19 @@ None of this is a bug; it is the contract. It means:
 2. **Run workers as an unprivileged user, preferably in a container** with only the media it needs mounted (the supplied image runs as `node`), no host mounts of credentials, and no access to the metadata service or internal networks it does not need.
 3. **One fleet per trust level.** Do not share workers between an app you trust and one whose job specs you do not control.
 
+## Opt-in isolated command runtime
+
+The `runIsolatedCommand()` helper is an opt-in primitive for a trusted custom executor, not the default executor for `ffmpeg` or a per-tenant authorization system. It defaults to Podman and supports the Docker CLI as an alternative. It creates a fresh container with no network, no host mounts, a read-only root filesystem, tmpfs scratch, dropped capabilities, `no-new-privileges`, a non-root UID:GID and CPU/memory/PID limits. The host-side job work directory must be on Linux tmpfs; the helper fails closed otherwise. Inputs and outputs are streamed as archives rather than mounted.
+
+Important limits:
+
+- The caller must authorize and stage inputs, choose trusted/pinned images and commands, and publish or upload outputs. The helper does not grant tenant-scoped S3 access or provide checkpoint semantics.
+- Only regular files are transferred; symlinks and special files are excluded. The image needs `/bin/sh`, `sleep`, `find` and `tar`.
+- This code path currently has unit tests for argument validation and tmpfs detection, but no runtime-enabled integration test in CI yet. Do not treat it as production-certified until Podman integration tests cover cancellation, cleanup, limits and transfer integrity.
+- Rootless Podman is preferred. Docker's daemon remains a high-privilege boundary, and neither runtime prevents kernel/runtime vulnerabilities.
+
+Ordinary jobs remain unsandboxed unless an integrating application explicitly routes them through this helper in a trusted custom executor. Do not infer isolation from a worker merely running in a container.
+
 ## Authentication
 
 | Surface | Open by default? | How to close it |
