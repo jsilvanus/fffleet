@@ -1,8 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, readdir, realpath, rm, statfs } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, rename, rm, statfs } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
-import { pipeline } from 'node:stream/promises';
 
 const TMPFS_MAGIC = 0x01021994;
 const STDERR_LIMIT = 8192;
@@ -216,45 +215,95 @@ function runTool(command, args, { signal, allowNonZero = false, onStdout = () =>
   });
 }
 
-async function transferIntoContainer(runtime, name, inputDir, signal, onOutput) {
-  // Only regular files are included: symlinks are never archived or followed.
-  const find = spawn('find', ['.', '-type', 'f', '-print0'], { cwd: inputDir, stdio: ['ignore', 'pipe', 'pipe'], signal });
-  const pack = spawn('tar', ['--null', '-T', '-', '-cf', '-'], { cwd: inputDir, stdio: ['pipe', 'pipe', 'pipe'], signal });
-  const unpack = spawn(runtime, ['exec', '-i', name, 'tar', '-xf', '-', '-C', '/work/in'], { stdio: ['pipe', 'ignore', 'pipe'], signal });
-  const errors = [];
-  for (const child of [find, pack, unpack]) {
-    child.stderr.on('data', chunk => { errors.push(chunk.toString()); onOutput(chunk.toString().trimEnd()); });
+async function regularFiles(root) {
+  const files = [];
+  async function walk(dir, prefix = '') {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const full = resolve(dir, entry.name);
+      if (entry.isDirectory()) await walk(full, rel);
+      else if (entry.isFile()) {
+        const info = await lstat(full);
+        if (info.isFile() && !info.isSymbolicLink()) files.push({ full, relative: rel, size: info.size });
+      }
+      // Symlinks and special files are intentionally not transferred.
+    }
   }
-  const statuses = Promise.all([find, pack, unpack].map(waitOutcome));
-  try {
-    await Promise.all([pipeline(find.stdout, pack.stdin), pipeline(pack.stdout, unpack.stdin)]);
-    const outcomes = await statuses;
-    const failed = outcomes.find(outcome => outcome.error || outcome.code !== 0);
-    if (failed) throw new Error(`input transfer failed: ${failed.error?.message ?? errors.join('').slice(-1000)}`);
-  } catch (err) {
-    for (const child of [find, pack, unpack]) child.kill();
-    await statuses;
-    throw new Error(`input transfer failed: ${err.message}; ${errors.join('').slice(-2000)}`);
+  await walk(root);
+  return files.sort((a, b) => a.relative.localeCompare(b.relative));
+}
+
+async function transferIntoContainer(runtime, name, inputDir, signal, onOutput) {
+  const files = await regularFiles(inputDir);
+  const maxBytes = 64 * 1024 ** 3;
+  const total = files.reduce((n, file) => n + file.size, 0);
+  if (total > maxBytes) throw new Error('input transfer exceeds the 64 GiB safety limit');
+  const dirs = new Set(['/work/in']);
+  for (const file of files) {
+    const parent = file.relative.split('/').slice(0, -1);
+    let current = '/work/in';
+    for (const part of parent) {
+      if (!part || part === '.' || part === '..') throw new Error('unsafe input path');
+      current += `/${part}`;
+      dirs.add(current);
+    }
+  }
+  for (const dir of [...dirs].sort((a, b) => a.split('/').length - b.split('/').length)) {
+    signal?.throwIfAborted();
+    await runTool(runtime, ['exec', name, 'mkdir', '-p', dir], { signal, onStdout: onOutput, onStderr: onOutput });
+  }
+  for (const file of files) {
+    signal?.throwIfAborted();
+    await runTool(runtime, ['cp', file.full, `${name}:/work/in/${file.relative}`], { signal, onStdout: onOutput, onStderr: onOutput });
   }
 }
 
 async function transferOutOfContainer(runtime, name, outputDir, signal, onOutput) {
-  const exportScript = 'cd /work/out && find . -type f -print0 > /tmp/fffleet-files && tar --null -T /tmp/fffleet-files -cf -';
-  const pack = spawn(runtime, ['exec', name, '/bin/sh', '-c', exportScript], { stdio: ['ignore', 'pipe', 'pipe'], signal });
-  const unpack = spawn('tar', ['--no-same-owner', '--no-same-permissions', '-xf', '-', '-C', outputDir], { stdio: ['pipe', 'ignore', 'pipe'], signal });
-  const errors = [];
-  for (const child of [pack, unpack]) child.stderr.on('data', chunk => { errors.push(chunk.toString()); onOutput(chunk.toString().trimEnd()); });
-  const statuses = Promise.all([pack, unpack].map(waitOutcome));
-  try {
-    await pipeline(pack.stdout, unpack.stdin);
-    const outcomes = await statuses;
-    const failed = outcomes.find(outcome => outcome.error || outcome.code !== 0);
-    if (failed) throw new Error(`output transfer failed: ${failed.error?.message ?? errors.join('').slice(-1000)}`);
-  } catch (err) {
-    for (const child of [pack, unpack]) child.kill();
-    await statuses;
-    throw new Error(`output transfer failed: ${err.message}; ${errors.join('').slice(-2000)}`);
+  const listed = await captureTool(runtime, ['exec', name, 'find', '/work/out', '-type', 'f', '-print0'], { signal, maxBytes: 8 * 1024 * 1024 });
+  const paths = listed.stdout.toString('utf8').split('\\0').filter(Boolean);
+  for (const source of paths) {
+    signal?.throwIfAborted();
+    const prefix = '/work/out/';
+    if (!source.startsWith(prefix)) throw new Error('runtime returned an output path outside /work/out');
+    const rel = source.slice(prefix.length);
+    const parts = rel.split('/');
+    if (!rel || parts.some(part => !part || part === '.' || part === '..')) throw new Error('runtime returned an unsafe output path');
+    const destination = resolve(outputDir, ...parts);
+    if (!within(outputDir, destination)) throw new Error('output path escaped workDir');
+    await mkdir(resolve(destination, '..'), { recursive: true });
+    const temporary = `${destination}.fffleet-${randomBytes(4).toString('hex')}.part`;
+    try {
+      await runTool(runtime, ['cp', `${name}:${source}`, temporary], { signal, onStdout: onOutput, onStderr: onOutput });
+      const info = await lstat(temporary);
+      if (!info.isFile() || info.isSymbolicLink()) continue;
+      await rename(temporary, destination);
+    } finally {
+      await rm(temporary, { recursive: true, force: true }).catch(() => {});
+    }
   }
+}
+
+function captureTool(command, args, { signal, maxBytes = 8 * 1024 * 1024 } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], signal });
+    const chunks = [];
+    let size = 0;
+    let stderr = '';
+    child.stdout.on('data', chunk => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        child.kill();
+        reject(new Error(`${command} output exceeded ${maxBytes} bytes`));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    child.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-STDERR_LIMIT); });
+    child.once('error', reject);
+    child.once('close', code => code === 0
+      ? resolve({ stdout: Buffer.concat(chunks), stderr })
+      : reject(new Error(`${command} ${args[0]} failed with exit code ${code}: ${stderr.trim()}`)));
+  });
 }
 
 function waitOutcome(child) {
