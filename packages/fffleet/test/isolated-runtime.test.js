@@ -30,12 +30,17 @@ test('isolated runtime rejects malformed args, users and environment values', as
   await assert.rejects(runIsolatedCommand({ ...base, env: { BAD: 'line\nbreak' } }), /invalid isolated environment variable/);
 });
 
-test('isTmpfs fails closed for an ordinary temporary directory', async () => {
+test('isolated runtime refuses ordinary disk-backed scratch before launching a container', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'fffleet-isolated-'));
   try {
-    // This is a property test rather than assuming every CI runner uses a particular /tmp filesystem.
-    const result = await isTmpfs(dir);
-    assert.equal(typeof result, 'boolean');
+    if (await isTmpfs(dir)) {
+      t.skip('the platform temporary directory is already tmpfs-backed');
+      return;
+    }
+    await assert.rejects(
+      runIsolatedCommand({ image: 'example/image:1', command: 'true', workDir: dir }),
+      /workDir is not on tmpfs/,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
