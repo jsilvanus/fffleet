@@ -32,6 +32,26 @@ While a job runs, `job.on('stderr', tail => ...)` and `job.stderrTail` give ffmp
 
 The job contract, routes and error codes are documented in the [repository README](https://github.com/jsilvanus/fffleet#the-job-contract-v1). The building blocks (`JobManager`, `validateSpec`, `followJobEvents`, …) are exported too. `fffleet/server` holds the HTTP API that the worker and the orchestrator use.
 
+## Opt-in isolated command runtime
+
+For trusted custom executors, `runIsolatedCommand()` runs a command in a fresh container (Podman by default; Docker CLI optional), with no host bind mounts, no network, a read-only root filesystem, tmpfs scratch, dropped capabilities, no-new-privileges and resource limits. Inputs must already be staged in `workDir/in`; regular output files are copied back to `workDir/out`.
+
+```js
+import { runIsolatedCommand } from 'fffleet';
+
+// Inside a trusted custom executor, after staging only authorized inputs into runtime.workDir/in:
+const result = await runIsolatedCommand({
+  image: 'registry.example.org/trusted-toolchain:1.2.3', // pin/allow-list images in your application
+  command: '/usr/local/bin/build-project',
+  args: ['--input', '/work/in', '--output', '/work/out'],
+  env: { FFFLEET_INPUT_DIR: '/work/in', FFFLEET_OUTPUT_DIR: '/work/out' },
+  workDir: runtime.workDir,
+  signal: runtime.signal,
+});
+```
+
+The worker's `FFFLEET_WORK_DIR` must point to Linux tmpfs (for example, under `/dev/shm`); the helper refuses non-tmpfs scratch by default. The image must include `/bin/sh`, `sleep`, `find` and `tar`. The caller must stage inputs through trusted, authorized code and handle output upload/publication itself. This is a low-level opt-in primitive, **not** automatic isolation for ordinary FFmpeg jobs, a tenant authorization system, or a guarantee against container-runtime/kernel vulnerabilities. Prefer rootless Podman.
+
 See also the [integration guide](https://github.com/jsilvanus/fffleet/blob/main/docs/integration-guide.md).
 
 License: EUPL-1.2
