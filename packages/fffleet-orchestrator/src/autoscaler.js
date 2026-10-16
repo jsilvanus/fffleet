@@ -88,6 +88,7 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
       log(`autoscaler: started worker ${workerId} in pool ${pool.name}`);
     } catch (err) {
       instances.delete(workerId);
+      pendingDiscovery.add(pool.name);
       pool.failures++;
       pool.backoffUntil = now() + Math.min(10 * 60000, 5000 * 2 ** Math.min(pool.failures, 7));
       metrics?.creates.inc({ pool: pool.name, result: 'error' });
