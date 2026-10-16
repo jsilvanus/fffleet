@@ -24,12 +24,12 @@ None of this is a bug; it is the contract. It means:
 
 ## Opt-in isolated command runtime
 
-The `runIsolatedCommand()` helper is an opt-in primitive for a trusted custom executor, not the default executor for `ffmpeg` or a per-tenant authorization system. It defaults to Podman and supports the Docker CLI as an alternative. It creates a fresh container with no network, no host mounts, a read-only root filesystem, tmpfs scratch, dropped capabilities, `no-new-privileges`, a non-root UID:GID and CPU/memory/PID limits. The host-side job work directory must be on Linux tmpfs; the helper fails closed otherwise. Inputs and outputs are streamed as archives rather than mounted.
+The `runIsolatedCommand()` helper is an opt-in primitive for a trusted custom executor, not the default executor for `ffmpeg` or a per-tenant authorization system. It defaults to Podman and supports the Docker CLI as an alternative. It creates a fresh container with no network, no host mounts, a read-only root filesystem, tmpfs scratch, dropped capabilities, `no-new-privileges`, a non-root UID:GID and CPU/memory/PID limits. The host-side job work directory must be on Linux tmpfs; the helper fails closed otherwise. Inputs and outputs are copied file-by-file through the runtime CLI; no host directories are mounted.
 
 Important limits:
 
 - The caller must authorize and stage inputs, choose trusted/pinned images and commands, and publish or upload outputs. The helper does not grant tenant-scoped S3 access or provide checkpoint semantics.
-- Only regular files are transferred; symlinks and special files are excluded. The image needs `/bin/sh`, `sleep`, `find` and GNU `tar`.
+- Only regular files are transferred; symlinks and special files are excluded. The image needs `/bin/sh`, `sleep` and `find`.
 - CI has a Podman integration test for basic execution, file transfer, tmpfs/no-swap enforcement and symlink exclusion. Cancellation, resource-limit enforcement, transfer-size exhaustion and cleanup during runtime failures still need more coverage. Do not treat the helper as production-certified until those cases are tested.
 - Rootless Podman is preferred. Docker's daemon remains a high-privilege boundary, and neither runtime prevents kernel/runtime vulnerabilities.
 
