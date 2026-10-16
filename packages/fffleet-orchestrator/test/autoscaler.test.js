@@ -375,3 +375,29 @@ test('a pool with persistently failing provider discovery is not scaled up', asy
   assert.match(w.log.join('\n'), /will retry discovery/);
   await w.scaler.stop();
 });
+
+
+test('ambiguous provider create failure reconciles a server found by label before retrying', async () => {
+  const w = world([pool('cloud', { max: 2 })]);
+  w.job();
+  w.advance(11_000);
+  w.providers.cloud.create = async function (req) {
+    this.existing.push({
+      providerId: 'server-created-before-response-was-lost',
+      workerId: req.workerId,
+      pool: req.pool.name,
+      createdAt: 1_000_000,
+    });
+    throw new Error('response lost');
+  };
+
+  await w.scaler.tick();
+  assert.equal(w.created.length, 0);
+  assert.match(w.log.join('\n'), /reconciling provider state/);
+  await w.scaler.tick();
+
+  assert.equal(w.scaler.describe().pools[0].workers.length, 1);
+  assert.equal(w.scaler.describe().pools[0].workers[0].providerId, 'server-created-before-response-was-lost');
+  assert.equal(w.created.length, 0, 'the recovered instance prevents a duplicate create');
+  await w.scaler.stop();
+});
