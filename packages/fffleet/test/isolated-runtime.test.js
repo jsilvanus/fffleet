@@ -28,6 +28,7 @@ test('isolated runtime rejects malformed args, users and environment values', as
   await assert.rejects(runIsolatedCommand({ ...base, args: [1] }), /array of strings/);
   await assert.rejects(runIsolatedCommand({ ...base, user: 'root' }), /numeric UID:GID/);
   await assert.rejects(runIsolatedCommand({ ...base, env: { BAD: 'line\nbreak' } }), /invalid isolated environment variable/);
+  await assert.rejects(runIsolatedCommand({ ...base, env: { AWS_SECRET_ACCESS_KEY: 'should-not-pass' } }), /invalid isolated environment variable/);
 });
 
 test('isolated runtime refuses ordinary disk-backed scratch before launching a container', async t => {
