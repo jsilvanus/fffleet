@@ -168,7 +168,7 @@ async function assertLocalDocker() {
 }
 
 function isLocalDockerEndpoint(endpoint) {
-  return /^(?:unix:\/\/|npipe:\/\/|\\\\\.\\pipe\\)/i.test(endpoint);
+  return /^(?:unix:\/\/|npipe:\/\/)/i.test(endpoint);
 }
 
 function sizeBytes(value, name, maxBytes) {
