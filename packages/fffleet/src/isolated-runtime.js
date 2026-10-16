@@ -208,13 +208,15 @@ async function transferIntoContainer(runtime, name, inputDir, signal, onOutput) 
   for (const child of [find, pack, unpack]) {
     child.stderr.on('data', chunk => { errors.push(chunk.toString()); onOutput(chunk.toString().trimEnd()); });
   }
-  const statuses = [wait(find), wait(pack), wait(unpack)];
+  const statuses = Promise.all([find, pack, unpack].map(waitOutcome));
   try {
     await Promise.all([pipeline(find.stdout, pack.stdin), pipeline(pack.stdout, unpack.stdin)]);
-    const codes = await Promise.all(statuses);
-    if (codes.some(code => code !== 0)) throw new Error(`input transfer failed: ${errors.join('').slice(-1000)}`);
+    const outcomes = await statuses;
+    const failed = outcomes.find(outcome => outcome.error || outcome.code !== 0);
+    if (failed) throw new Error(`input transfer failed: ${failed.error?.message ?? errors.join('').slice(-1000)}`);
   } catch (err) {
     for (const child of [find, pack, unpack]) child.kill();
+    await statuses;
     throw err;
   }
 }
@@ -225,20 +227,23 @@ async function transferOutOfContainer(runtime, name, outputDir, signal, onOutput
   const unpack = spawn('tar', ['--no-same-owner', '--no-same-permissions', '-xf', '-', '-C', outputDir], { stdio: ['pipe', 'ignore', 'pipe'], signal });
   const errors = [];
   for (const child of [pack, unpack]) child.stderr.on('data', chunk => { errors.push(chunk.toString()); onOutput(chunk.toString().trimEnd()); });
-  const statuses = [wait(pack), wait(unpack)];
+  const statuses = Promise.all([pack, unpack].map(waitOutcome));
   try {
     await pipeline(pack.stdout, unpack.stdin);
-    const codes = await Promise.all(statuses);
-    if (codes.some(code => code !== 0)) throw new Error(`output transfer failed: ${errors.join('').slice(-1000)}`);
+    const outcomes = await statuses;
+    const failed = outcomes.find(outcome => outcome.error || outcome.code !== 0);
+    if (failed) throw new Error(`output transfer failed: ${failed.error?.message ?? errors.join('').slice(-1000)}`);
   } catch (err) {
     for (const child of [pack, unpack]) child.kill();
+    await statuses;
     throw err;
   }
 }
 
-function wait(child) {
-  return new Promise((resolve, reject) => {
-    child.once('error', reject);
-    child.once('close', code => resolve(code ?? 1));
+function waitOutcome(child) {
+  return new Promise(resolve => {
+    let error = null;
+    child.once('error', err => { error = err; });
+    child.once('close', code => resolve({ code: code ?? 1, error }));
   });
 }
