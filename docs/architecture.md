@@ -97,7 +97,7 @@ Workers fetch the orchestrator's public keys (`GET /v1/auth/keys`) and accept th
 
 ## Storage
 
-fffleet stores no media. Endpoints are URIs: `file:` on a shared mount (placed with a `mount:` capability), `http(s):` (PUT for outputs), `s3://` with a built-in SigV4 client (single PUT under 16 MB, multipart above; downloads use `node:http(s)` because Node 24's undici can assert on a paused body when the server closes the connection), and live schemes passed through to ffmpeg. The orchestrator's only persistent state is the optional SQLite file (job records, `node:sqlite`, Node 22.13+), the signing key and the clients file.
+fffleet stores no media. Endpoints are URIs: `file:` on a shared mount (placed with a `mount:` capability), `http(s):` (PUT for outputs), `s3://` with a built-in SigV4 client (single PUT under 16 MB, multipart above; downloads use `node:http(s)` because Node 24's undici can assert on a paused body when the server closes the connection), and live schemes passed through to ffmpeg. The orchestrator's persistent state is the optional SQLite file (job records, `node:sqlite`, Node 22.13+), the signing key and the clients file. Store write errors are logged and do not stop job processing, so configure log alerts and do not treat a configured state file as proof that every update was saved.
 
 ## Observability
 
