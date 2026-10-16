@@ -259,7 +259,7 @@ async function transferIntoContainer(runtime, name, inputDir, signal, onOutput, 
 
 async function transferOutOfContainer(runtime, name, outputDir, signal, onOutput) {
   const listed = await captureTool(runtime, ['exec', name, 'find', '/work/out', '-type', 'f', '-print0'], { signal, maxBytes: 8 * 1024 * 1024 });
-  const paths = listed.stdout.toString('utf8').split('\\0').filter(Boolean);
+  const paths = listed.stdout.toString('utf8').split(String.fromCharCode(0)).filter(Boolean);
   for (const source of paths) {
     signal?.throwIfAborted();
     const prefix = '/work/out/';
