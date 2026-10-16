@@ -92,7 +92,7 @@ export function createAutoscaler({ config, providers, view, joinKey = randomByte
       pool.failures++;
       pool.backoffUntil = now() + Math.min(10 * 60000, 5000 * 2 ** Math.min(pool.failures, 7));
       metrics?.creates.inc({ pool: pool.name, result: 'error' });
-      log(`autoscaler: could not start a worker in pool ${pool.name}: ${err.message}; retrying after ${Math.round((pool.backoffUntil - now()) / 1000)}s`);
+      log(`autoscaler: could not start a worker in pool ${pool.name}: ${err.message}; reconciling provider state and retrying after ${Math.round((pool.backoffUntil - now()) / 1000)}s`);
     }
   }
 
