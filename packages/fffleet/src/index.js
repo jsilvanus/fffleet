@@ -7,6 +7,7 @@ export { JobManager, normalizeSlots, normalizeKinds, autoSlots } from './job-man
 export { JobRecord, FleetError, byPriority, pruneFinished } from './job-record.js';
 export { runFfmpegJob } from './executor.js';
 export { runFfprobeJob } from './ffprobe.js';
+export { runIsolatedCommand, isTmpfs } from './isolated-runtime.js';
 export { createProgressParser } from './progress.js';
 export { detectCapabilities, satisfies } from './capabilities.js';
 export { canConnect, parseProbes, probeCapabilities } from './probe.js';
