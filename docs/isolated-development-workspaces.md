@@ -1,21 +1,23 @@
-# Isolated development workspaces: storage and recovery direction
+# Generic isolated execution: integration boundary
 
-- **Status:** Proposed integration architecture, aligned with SiSSi D-047
+- **Status:** Proposed integration boundary, aligned with SiSSi D-047
 - **Date:** 2026-10-16
 
 ## Purpose
 
-Extend fffleet's generic execution infrastructure to support isolated, interactive development environments as well as bounded jobs, without making fffleet specific to SiSSi. SiSSi owns scene/workspace authorization, authoring history, asset semantics, review, and publication. fffleet provides execution/job dispatch and runtime-provider integration; an approved isolation layer runs untrusted project code.
+This document defines how an integrating application can use fffleet's generic job/execution capabilities for isolated media or project-code work. It does **not** propose moving application-specific workspace logic into fffleet. fffleet will not own interactive workspace/session lifecycle, workspace checkpoints, recovery policy, scene/asset semantics, or the SiSSi extended worker. That extended worker lives outside the fffleet repository.
+
+fffleet remains generic: job contract, scheduling, worker capacity, execution-provider integration, and generic job status/logs/output references. The integrating application owns workspace authorization and lifecycle, authoring history, input/output meaning, recovery decisions, review, and publication.
 
 ## Workload separation
 
-Keep three lifecycles distinct:
+Keep application lifecycle separate from generic execution:
 
-- **Interactive development session:** long-running, one isolated environment per active workspace initially; human and AI clients share the project through authorized interfaces.
-- **Disposable validation/build job:** short-lived isolated execution from a controlled snapshot, returning bounded logs/diagnostics and artifact references.
-- **Ordinary fleet job:** existing batch/stream jobs continue to use fffleet's existing job contract and scheduling.
+- **Application-owned interactive workspace:** the integrating application manages its workspace and any long-running development session. fffleet does not become the workspace/session authority.
+- **Disposable isolated execution:** the application submits a bounded job from controlled inputs; the isolated runtime returns bounded logs/diagnostics and explicit output/artifact references.
+- **Ordinary fleet job:** existing batch/stream jobs continue to use fffleet's existing generic job contract and scheduling.
 
-A regular worker must not execute untrusted project code in its own security context. It may dispatch or manage an isolated execution through a trusted wrapper/provider. Podman is the initial provider target for this integration, while the provider contract remains runtime-independent.
+A regular worker must not execute untrusted project code in its own security context. It may dispatch or manage a generic isolated execution through a trusted wrapper/provider. Podman is the initial provider target, while the provider contract remains runtime-independent. Any extended worker or application-specific adapter is outside this repository.
 
 ## Workspace and object-storage model
 
@@ -52,4 +54,4 @@ Before implementation, specify and test:
 
 ## Deliberately not specified yet
 
-This document does not select a specific S3 vendor, bucket naming convention, incremental snapshot algorithm, checkpoint interval, or exact API. Those should be selected after storage sizing and failure/recovery requirements are measured. It also does not establish a new fffleet workspace API: the generic execution-provider and artifact contracts should be designed first.
+This document does not select a specific S3 vendor, bucket naming convention, incremental snapshot algorithm, checkpoint interval, or exact API. Those are owned by the integrating application and should be selected after storage sizing and failure/recovery requirements are measured. It does not establish a fffleet workspace/session API or place the extended worker in this repository; only the generic isolated-execution and input/output contracts belong here.
