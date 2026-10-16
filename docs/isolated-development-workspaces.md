@@ -23,9 +23,10 @@ S3-compatible object storage is the durable object/artifact layer, not the live 
 
 - Managed project import creates a durable initial snapshot.
 - Managed workspaces are checkpointed periodically and during planned shutdown.
-- The live development environment uses a writable filesystem appropriate for Node/Vite and dependency caches.
-- Host-directory mounts are a separate explicitly authorized mode. Their host directory remains authoritative; S3 checkpoints are recovery copies.
-- Disposable jobs consume controlled snapshots and return outputs as verified object references.
+- The live development environment uses a writable filesystem appropriate for Node/Vite and dependency caches, but that filesystem is ephemeral from the execution provider's perspective.
+- **Ephemeral fffleet execution containers must not receive durable host bind mounts or persistent host volumes.** They must not use fffleet host directories as workspace storage or retain workspace/job data on the host after teardown. Provider-managed writable layers or scratch storage must be disposable and cleaned up with the execution environment; if the deployment's threat model forbids plaintext data touching host disks at all, enforce tmpfs or equivalent encrypted ephemeral scratch.
+- Host-directory mounts are not part of this ephemeral execution model. If an integrating application supports a persistent host-mounted workspace mode, that is an application-owned, separately authorized feature and must not be silently introduced into fffleet's ephemeral job containers.
+- Disposable jobs consume controlled snapshots through explicit input transfers and return required outputs through explicit, verified output transfers or artifact references. No durable binding is used as a shortcut for input/output exchange.
 - Container stop, replacement, or loss does not imply workspace deletion.
 
 Use trusted services or short-lived, narrowly scoped transfer grants to move objects. Never inject permanent, broadly privileged object-store credentials into untrusted containers. A transfer grant should be limited to the required operation and object/prefix, expire quickly, and be checked by trusted code. Verify content checksums and use idempotent transfer operations.
@@ -47,6 +48,7 @@ Before implementation, specify and test:
 - Restore-point selection, PostgreSQL PITR coordination, object availability, and restore drills.
 - Behavior during object-store outage, invalid/corrupt checkpoints, quota exhaustion, and host-mount disappearance.
 - Separate policies for workspace snapshots, transient logs, build artifacts, and immutable published outputs.
+- Verify provider configuration and teardown so ephemeral containers have no durable bind mounts/volumes and no job data remains on the fffleet host after cleanup; define whether scratch must be memory-backed or encrypted at rest.
 
 ## Deliberately not specified yet
 
