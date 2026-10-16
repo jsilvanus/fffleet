@@ -401,3 +401,25 @@ test('ambiguous provider create failure reconciles a server found by label befor
   assert.equal(w.created.length, 0, 'the recovered instance prevents a duplicate create');
   await w.scaler.stop();
 });
+
+
+test('a worker whose destroy keeps failing still counts against maxWorkers and pool max', async () => {
+  const w = world([pool('p', { min: 0, max: 1, slots: 'default=1' })]);
+  w.job();
+  w.advance(11_000);
+  await w.scaler.tick();
+  w.register(0);
+  w.queue.length = 0;
+  await w.scaler.tick();
+
+  w.providers.p.destroy = async () => { throw new Error('provider API unavailable'); };
+  w.advance(6 * 60_000);
+  await w.scaler.tick();
+  assert.equal(w.scaler.describe().pools[0].workers[0].state, 'removing');
+
+  w.job();
+  w.advance(11_000);
+  await w.scaler.tick();
+  assert.equal(w.created.length, 1, 'do not exceed pool/global limits while the old instance may still exist');
+  await w.scaler.stop();
+});
