@@ -47,6 +47,8 @@ export interface JobSpecInput {
   stdin?: boolean;
   /** Stream jobs only: ffmpeg's `pipe:1` is readable through `job.stdout()`. No `-progress` is reported. */
   stdout?: boolean;
+  /** Secret values replaced by *** in stderr tails and job events (4-512 characters, at most 10). The spec itself keeps them. */
+  redact?: string[];
   inputs?: Endpoint[];
   outputs?: Endpoint[];
   ffmpeg?: { args: string[]; durationMs?: number | null };

@@ -92,6 +92,11 @@ export function validateSpec(input) {
   if (typeof stdout !== 'boolean') err('stdout', 'must be a boolean');
   else if (stdout && s.kind !== 'stream') err('stdout', 'is only allowed for stream jobs');
 
+  const redact = s.redact ?? [];
+  if (!Array.isArray(redact) || redact.length > 10 || redact.some(r => typeof r !== 'string' || r.length < 4 || r.length > 512)) {
+    err('redact', 'must be an array of at most 10 strings of 4-512 characters');
+  }
+
   const requires = s.requires ?? [];
   if (!Array.isArray(requires) || requires.some(r => typeof r !== 'string' || !r)) err('requires', 'must be an array of capability strings');
 
@@ -136,6 +141,7 @@ export function validateSpec(input) {
     inputs,
     outputs,
   };
+  if (redact.length) spec.redact = [...new Set(redact)];
   if (ffmpeg) spec.ffmpeg = ffmpeg;
   else if (s[type] !== undefined) spec[type] = s[type];
   return { ok: true, spec };
