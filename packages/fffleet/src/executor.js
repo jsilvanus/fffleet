@@ -245,9 +245,11 @@ function runProcess(cmd, args, spec, rt) {
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', parse);
     }
+    const secrets = spec.redact ?? [];
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', d => {
-      tail = (tail + d).slice(-STDERR_TAIL_BYTES);
+      // Redact the whole buffer before trimming, so a secret split across two chunks is still caught.
+      tail = redactSecrets(tail + d, secrets).slice(-STDERR_TAIL_BYTES);
       rt.stderr?.(tail.trim());
     });
     if (child.stdin) {
@@ -287,6 +289,13 @@ function runProcess(cmd, args, spec, rt) {
       resolve({ exitCode: code ?? (signal ? 128 : 1), stderrTail: tail.trim() || null });
     });
   });
+}
+
+/** Replaces every occurrence of a caller-supplied secret with "***" (spec.redact). */
+export function redactSecrets(text, secrets) {
+  let out = text;
+  for (const secret of secrets) out = out.split(secret).join('***');
+  return out;
 }
 
 /** Windows: ends a process and everything it started. Falls back to killing just the child. */

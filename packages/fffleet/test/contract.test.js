@@ -85,3 +85,16 @@ test('canonicalJson ignores key order and undefined', () => {
 test('isFinal', () => {
   assert.deepEqual(['queued', 'running', 'succeeded', 'failed', 'cancelled'].map(isFinal), [false, false, true, true, true]);
 });
+
+test('redact is optional, validated and kept only when given', () => {
+  const base = { id: 'r1', kind: 'stream', ffmpeg: { args: ['-i', 'rtsp://x/y', '-f', 'null', '-'] } };
+  const plain = validateSpec(base);
+  assert.equal(plain.ok, true);
+  assert.equal('redact' in plain.spec, false);
+  const ok = validateSpec({ ...base, redact: ['abcd1234', 'abcd1234', 'efgh5678'] });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.spec.redact, ['abcd1234', 'efgh5678']);
+  assert.equal(validateSpec({ ...base, redact: ['abc'] }).ok, false);
+  assert.equal(validateSpec({ ...base, redact: 'abcd1234' }).ok, false);
+  assert.equal(validateSpec({ ...base, redact: Array(11).fill('abcd1234') }).ok, false);
+});

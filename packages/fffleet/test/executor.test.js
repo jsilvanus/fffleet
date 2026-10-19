@@ -122,3 +122,16 @@ test('a missing ffmpeg binary fails with SPAWN_FAILED', async () => {
   assert.equal(final.error.code, 'SPAWN_FAILED');
   await m.close();
 });
+
+test('redact replaces secrets in the stderr tail (ffmpeg prints the output name)', async () => {
+  const secret = 'K3Y-SECRET-1234';
+  const out = join(tmp.dir, `redact-${secret}.png`);
+  const { events, final } = await run({
+    ...scaleJob('redact', pathToFileURL(join(tmp.dir, 'red.png')).href, pathToFileURL(out).href),
+    redact: [secret],
+  });
+  assert.equal(final.state, 'succeeded', JSON.stringify(final.error));
+  const seen = events.map(e => e.stderrTail ?? '').join('\n') + (final.stderrTail ?? '');
+  assert.ok(!seen.includes(secret), 'secret must not appear in events');
+  assert.ok(final.stderrTail?.includes('***'), 'secret replaced by ***');
+});
