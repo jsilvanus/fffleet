@@ -38,6 +38,8 @@ export interface JobSpecInput {
   class?: string;
   /** -1000..1000, higher runs first. */
   priority?: number;
+  /** Ordered worker IDs. The first eligible worker wins; unlisted workers are excluded. */
+  workerPreference?: string[];
   owner?: string;
   /** Capabilities a worker must have, e.g. 'filter:ass', 'encoder:libx264', 'font:DejaVu Sans'. */
   requires?: string[];
@@ -65,6 +67,8 @@ export interface JobSpec {
   type: string;
   class: string;
   priority: number;
+  /** Ordered worker IDs; when set, only listed workers may run the job. */
+  workerPreference?: string[];
   owner: string;
   requires: string[];
   labels: Record<string, string>;
@@ -119,6 +123,7 @@ export interface JobSnapshot {
   class: string;
   owner: string;
   priority: number;
+  workerPreference?: string[];
   labels: Record<string, string>;
   state: JobState;
   workerId: string | null;
