@@ -174,7 +174,8 @@ export function createOrchestrator({
 
   function pump() {
     for (const job of [...queue]) {
-      const candidates = [...workers.values()].filter(w => fits(w, job)).sort((a, b) => load(a) - load(b));
+      const preference = job.spec.workerPreference;
+      const candidates = [...workers.values()].filter(w => fits(w, job) && (!preference || preference.includes(w.id))).sort((a, b) => preference ? preference.indexOf(a.id) - preference.indexOf(b.id) : load(a) - load(b));
       if (!candidates.length) continue;
       queue.splice(queue.indexOf(job), 1);
       dispatch(job, candidates[0]);
