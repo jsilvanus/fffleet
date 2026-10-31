@@ -98,3 +98,14 @@ test('redact is optional, validated and kept only when given', () => {
   assert.equal(validateSpec({ ...base, redact: 'abcd1234' }).ok, false);
   assert.equal(validateSpec({ ...base, redact: Array(11).fill('abcd1234') }).ok, false);
 });
+
+test('workerPreference is optional, preserves order and rejects invalid lists', () => {
+  const ordered = parseSpec({ ...minimal, workerPreference: ['assisting-pc', 'operator-pc', 'pi'] });
+  assert.deepEqual(ordered.workerPreference, ['assisting-pc', 'operator-pc', 'pi']);
+  assert.equal('workerPreference' in parseSpec(minimal), false);
+  for (const value of [[], ['pi', 'pi'], ['pi', ''], ['pi', 3], 'pi']) {
+    const result = validateSpec({ ...minimal, workerPreference: value });
+    assert.equal(result.ok, false, JSON.stringify(value));
+    assert.ok(result.errors.some(e => e.path === 'workerPreference'));
+  }
+});
