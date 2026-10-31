@@ -16,6 +16,7 @@
  * @property {string} type           Executor, 'ffmpeg' by default.
  * @property {string} class          Slot pool on the worker, 'default' by default.
  * @property {number} priority       Higher runs first.
+ * @property {string[]} [workerPreference] Ordered worker IDs; also restricts placement to listed workers.
  * @property {string} owner          Opaque label of whoever submitted the job.
  * @property {string[]} requires     Capabilities a worker must have, e.g. 'filter:ass'.
  * @property {Record<string, string>} labels
