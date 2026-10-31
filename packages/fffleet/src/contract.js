@@ -79,6 +79,15 @@ export function validateSpec(input) {
   const priority = s.priority ?? 0;
   if (!Number.isInteger(priority) || priority < -1000 || priority > 1000) err('priority', 'must be an integer from -1000 to 1000');
 
+  // Ordered worker IDs; when set, this list is also a placement allowlist.
+  const workerPreference = s.workerPreference;
+  if (workerPreference !== undefined && (!Array.isArray(workerPreference)
+    || workerPreference.length === 0
+    || workerPreference.some(id => typeof id !== 'string' || !id.trim() || id.length > 128)
+    || new Set(workerPreference).size !== workerPreference.length)) {
+    err('workerPreference', 'must be a non-empty array of unique worker IDs (1-128 characters each)');
+  }
+
   const owner = s.owner ?? '';
   if (typeof owner !== 'string' || owner.length > 256) err('owner', 'must be a string of at most 256 characters');
 
@@ -132,6 +141,7 @@ export function validateSpec(input) {
     type,
     class: cls,
     priority,
+    ...(workerPreference !== undefined ? { workerPreference: [...workerPreference] } : {}),
     owner,
     requires: [...new Set(requires)].sort(),
     labels: { ...labels },
