@@ -129,6 +129,7 @@ export class JobRecord {
       class: this.spec.class,
       owner: this.spec.owner,
       priority: this.spec.priority,
+      workerPreference: this.spec.workerPreference,
       labels: this.spec.labels,
       state: this.state,
       workerId: this.workerId,
