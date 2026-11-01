@@ -1,5 +1,17 @@
 # fffleet-orchestrator
 
+## 2.7.0
+
+### Minor Changes
+
+- bbd4a17: Add `placement` rules to the config file: an ordered worker preference per job type, kind, class or required capability, with an optional `others` fallback. The config may now have no pools. Adds a systemd unit and docs for running the orchestrator on a Raspberry Pi.
+
+### Patch Changes
+
+- 755092e: Add ordered worker preferences to job specs so the orchestrator can choose the highest-ranked eligible worker and immediately fall through to the next available preferred worker.
+- Updated dependencies [755092e]
+  - fffleet@2.7.0
+
 ## 2.6.0
 
 ### Patch Changes
