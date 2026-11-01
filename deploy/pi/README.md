@@ -1,6 +1,6 @@
 # fffleet orchestrator on the Pi (kirkonpi)
 
-One orchestrator for the whole fleet runs on the Pi (Pi 4, Debian 13, Node 24 in `~/.local/node`). Workers on the
+One orchestrator for the whole fleet runs on the Pi (Pi 4, Debian 13, Node 24 in `~/.local/bin` (kirkonpi) or `~/.local/node/bin`). Workers on the
 assisting PC, the operator PC and the Pi itself register with it; apps (LCYT, Saarnavideo) send jobs to
 `http://192.168.1.78:5000` (the Pi's planned wired address). Nothing here is deployed by the repo: copy the files by hand.
 
@@ -8,7 +8,7 @@ assisting PC, the operator PC and the Pi itself register with it; apps (LCYT, Sa
 
 ```sh
 mkdir -p ~/apps/fffleet-orchestrator && cd ~/apps/fffleet-orchestrator
-export PATH=$HOME/.local/node/bin:$PATH
+export PATH=$HOME/.local/bin:$HOME/.local/node/bin:$PATH
 npm init -y >/dev/null && npm install fffleet-orchestrator     # pin a version if you like
 cp <repo>/deploy/pi/fffleet.yaml .
 cp <repo>/deploy/pi/orchestrator.env.example orchestrator.env && chmod 600 orchestrator.env   # set the two tokens

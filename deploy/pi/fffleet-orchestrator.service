@@ -1,4 +1,4 @@
-# User systemd unit for the fffleet orchestrator on the Pi (kirkonpi, bare metal, Node in ~/.local/node).
+# User systemd unit for the fffleet orchestrator on the Pi (kirkonpi, bare metal, node found on PATH: ~/.local/bin or ~/.local/node/bin).
 # Install:  mkdir -p ~/.config/systemd/user && cp fffleet-orchestrator.service ~/.config/systemd/user/
 #           systemctl --user daemon-reload && systemctl --user enable --now fffleet-orchestrator
 # Keep it running without a login session:  sudo loginctl enable-linger pi
@@ -11,9 +11,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/apps/fffleet-orchestrator
-Environment=PATH=%h/.local/node/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=%h/.local/bin:%h/.local/node/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=%h/apps/fffleet-orchestrator/orchestrator.env
-ExecStart=%h/.local/node/bin/node node_modules/fffleet-orchestrator/bin/fffleet-orchestrator.js
+ExecStart=/usr/bin/env node node_modules/fffleet-orchestrator/bin/fffleet-orchestrator.js
 Restart=always
 RestartSec=3
 
