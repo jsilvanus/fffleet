@@ -13,10 +13,14 @@ if (process.argv[2] === 'add-client') {
 }
 
 let scaling = null;
+let placement = [];
 const configPath = env.FFFLEET_CONFIG || (process.argv[2] === '--config' ? process.argv[3] : null);
 if (configPath) {
   try {
-    scaling = loadConfig(configPath);
+    const config = loadConfig(configPath);
+    placement = config.placement;
+    // Without pools there is nothing to scale: workers just register (a Pi with static workers, for example).
+    scaling = config.pools.length ? config : null;
   } catch (err) {
     console.error(`[fffleet-orchestrator] ${err.message}`);
     process.exit(1);
@@ -25,6 +29,7 @@ if (configPath) {
 
 const orchestrator = createOrchestrator({
   scaling,
+  placement,
   port: Number(env.PORT ?? 5000),
   host: env.HOST ?? '0.0.0.0',
   token: env.FFFLEET_TOKEN || null,

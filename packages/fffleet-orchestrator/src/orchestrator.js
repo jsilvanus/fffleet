@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { createAutoscaler } from './autoscaler.js';
+import { normalizePlacement, preferenceFor } from './placement.js';
 import { createProviders } from './providers/index.js';
 import { openSqliteJobStore } from './job-store.js';
 import { serveUi } from './ui.js';
@@ -31,6 +32,7 @@ const REDISPATCH_DELAY_MS = 500;
  * @param {import('node:crypto').KeyObject | string | null} [opts.signingKey]  Ed25519 key for tokens (KeyObject or PEM).
  * @param {string | null} [opts.signingKeyFile] Where the signing key is kept; created when missing. Without it tokens die with the process.
  * @param {number} [opts.tokenTtlSeconds]
+ * @param {object[]} [opts.placement]            Worker preference rules by job type, kind or class (see placement.js and the README).
  * @param {{ publicUrl: string | null, autoscale: object, pools: object[] } | null} [opts.scaling]  Where to start more workers (see loadConfig). Without it the pool is whatever registers.
  * @param {Record<string, object>} [opts.providers]   Provider instances by pool name, replacing the built-in ones (tests).
  * @param {Buffer | string | null} [opts.joinKey]    Key the workers' join secrets derive from. Default: the signing key's file contents, else random.
@@ -56,6 +58,7 @@ export function createOrchestrator({
   signingKeyFile = null,
   tokenTtlSeconds = 3600,
   scaling = null,
+  placement: placementRules = [],
   providers: providerOverrides = {},
   joinKey = null,
   workerToken = null,
@@ -71,6 +74,7 @@ export function createOrchestrator({
   ui = true,
   log = () => {},
 } = {}) {
+  const placement = normalizePlacement(placementRules);
   /** @type {Map<string, Worker>} */
   const workers = new Map();
   /** @type {Map<string, Job>} */
@@ -174,8 +178,11 @@ export function createOrchestrator({
 
   function pump() {
     for (const job of [...queue]) {
-      const preference = job.spec.workerPreference;
-      const candidates = [...workers.values()].filter(w => fits(w, job) && (!preference || preference.includes(w.id))).sort((a, b) => preference ? preference.indexOf(a.id) - preference.indexOf(b.id) : load(a) - load(b));
+      const preference = preferenceFor(placement, job.spec);
+      const rank = w => { const i = preference.workers.indexOf(w.id); return i < 0 ? Infinity : i; };
+      const candidates = [...workers.values()]
+        .filter(w => fits(w, job) && (!preference || preference.others || preference.workers.includes(w.id)))
+        .sort((a, b) => (preference ? (rank(a) === rank(b) ? 0 : rank(a) < rank(b) ? -1 : 1) : 0) || load(a) - load(b));
       if (!candidates.length) continue;
       queue.splice(queue.indexOf(job), 1);
       dispatch(job, candidates[0]);

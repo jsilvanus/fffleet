@@ -3,11 +3,12 @@
 import { readFileSync } from 'node:fs';
 import { KINDS, normalizeKinds, normalizeSlots } from 'fffleet';
 import { parseYaml } from './yaml.js';
+import { normalizePlacement } from './placement.js';
 
 export const PROVIDERS = ['process', 'docker', 'hetzner'];
 const DEFAULT_WORKER_IMAGE = 'ghcr.io/jsilvanus/fffleet-worker:latest';
 
-const TOP_KEYS = ['publicUrl', 'autoscale', 'pools'];
+const TOP_KEYS = ['publicUrl', 'autoscale', 'pools', 'placement'];
 const AUTOSCALE_KEYS = ['id', 'interval', 'scaleUpAfter', 'idleAfter', 'bootTimeout', 'maxWorkers', 'joinSecret'];
 const POOL_KEYS = ['name', 'provider', 'min', 'max', 'kinds', 'slots', 'slotsHint', 'capabilities', 'env', 'maxConcurrentCreates', 'idleAfter', 'process', 'docker', 'hetzner'];
 const PROVIDER_KEYS = {
@@ -48,7 +49,7 @@ function onlyKeys(obj, allowed, where) {
 
 /**
  * Checks a parsed config and fills in defaults. Throws an Error that names the offending setting.
- * @returns {{ publicUrl: string | null, autoscale: object, pools: object[] }}
+ * @returns {{ publicUrl: string | null, autoscale: object, pools: object[], placement: object[] }}
  */
 export function normalizeConfig(raw, env = process.env) {
   const doc = interpolateEnv(raw ?? {}, env);
@@ -69,9 +70,12 @@ export function normalizeConfig(raw, env = process.env) {
   if (autoscale.interval < 100) throw new Error('autoscale.interval must be at least 100ms');
   if (!(autoscale.maxWorkers >= 1)) throw new Error('autoscale.maxWorkers must be at least 1');
 
-  if (!Array.isArray(doc.pools) || !doc.pools.length) throw new Error('pools must list at least one pool');
+  const placement = normalizePlacement(doc.placement);
+  const poolList = doc.pools ?? [];
+  if (!Array.isArray(poolList)) throw new Error('pools must be a list');
+  if (!poolList.length && !placement.length) throw new Error('config must list at least one pool or one placement rule');
   const names = new Set();
-  const pools = doc.pools.map((p, i) => {
+  const pools = poolList.map((p, i) => {
     const where = `pools[${i}]`;
     onlyKeys(p, POOL_KEYS, where);
     if (typeof p.name !== 'string' || !/^[a-z0-9][a-z0-9-]{0,30}$/.test(p.name)) throw new Error(`${where}.name must be lowercase letters, digits and "-" (for example "batch-cloud")`);
@@ -133,7 +137,7 @@ export function normalizeConfig(raw, env = process.env) {
 
   const publicUrl = doc.publicUrl ? String(doc.publicUrl).replace(/\/+$/, '') : null;
   if (!publicUrl && pools.some(p => p.provider !== 'process')) throw new Error('publicUrl is required when a pool uses the docker or hetzner provider (the address new workers use to reach this orchestrator)');
-  return { publicUrl, autoscale, pools };
+  return { publicUrl, autoscale, pools, placement };
 }
 
 /** Reads and checks a config file; `.json` is parsed as JSON, anything else as YAML. */

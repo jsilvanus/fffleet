@@ -45,3 +45,12 @@ pools:
       serverType: cpx41
       location: hel1
       firewalls: [12345]
+
+# Which workers a kind of job prefers, in order (first match wins). Worker IDs are FFFLEET_WORKER_ID.
+# Optional; with it the file may have no pools at all. See deploy/pi/fffleet.yaml for a full example.
+placement:
+  - match: { type: dsk }                    # match any of: type, kind, class, requires
+    workers: [assisting-pc, operator-pc]    # first = most preferred; a busy or offline one is skipped at once
+  - match: { kind: stream }
+    workers: [assisting-pc, operator-pc, pi]
+    others: true                            # unlisted workers may serve after the listed ones (default: strict)
