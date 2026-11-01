@@ -488,3 +488,48 @@ test('the newest stderr lines of a running job reach the client before the job e
   w.controls.get('err1').release();
   assert.equal((await job.done).state, 'succeeded');
 });
+
+test('placement rules: per job type worker order, fallback when busy, Pi-only, per-job preference wins', async () => {
+  const o = await orchestrator({
+    placement: [
+      { match: { type: 'fake', class: 'dsk' }, workers: ['assist', 'operator'] },
+      { match: { type: 'fake', class: 'cam' }, workers: ['pi'] },
+      { match: { type: 'fake' }, workers: ['assist', 'operator', 'pi'], others: true },
+    ],
+  });
+  const pi = await worker(o, 'pi', { slots: { default: 2, dsk: 1, cam: 1 } });
+  const operator = await worker(o, 'operator', { slots: { default: 1, dsk: 1 } });
+  const assist = await worker(o, 'assist', { slots: { default: 1, dsk: 1 } });
+  const fleet = client(o);
+  const place = id => o.backend.get(id).workerId;
+
+  const d1 = await fleet.submit(fakeJob('d1', { class: 'dsk' }));
+  await until(() => d1.state === 'running');
+  assert.equal(place('d1'), 'assist', 'assisting PC first');
+  const d2 = await fleet.submit(fakeJob('d2', { class: 'dsk' }));
+  await until(() => d2.state === 'running');
+  assert.equal(place('d2'), 'operator', 'busy -> next in line, no waiting');
+  const d3 = await fleet.submit(fakeJob('d3', { class: 'dsk' }));
+  await sleep(150);
+  assert.equal(d3.state, 'queued', 'Pi is not in the DSK list: strict allowlist');
+
+  const c1 = await fleet.submit(fakeJob('c1', { class: 'cam' }));
+  await until(() => c1.state === 'running');
+  assert.equal(place('c1'), 'pi', 'pinned to the Pi');
+  const own = await fleet.submit(fakeJob('own', { workerPreference: ['pi'] }));
+  await until(() => own.state === 'running');
+  assert.equal(place('own'), 'pi', "the job's own preference beats the rules");
+
+  for (const [id, want] of [['o1', 'assist'], ['o2', 'operator']]) {
+    const j = await fleet.submit(fakeJob(id));
+    await until(() => j.state === 'running');
+    assert.equal(place(id), want, 'default class follows the list');
+  }
+  const o3 = await fleet.submit(fakeJob('o3'));
+  await until(() => o3.state === 'running');
+  assert.equal(place('o3'), 'pi', 'assist and operator are full; Pi is last in the list');
+  for (const w of [pi, operator, assist]) for (const c of w.controls.values()) c.release();
+  await until(() => d3.state === 'running');
+  assert.ok(['assist', 'operator'].includes(place('d3')));
+  await d3.cancel();
+});

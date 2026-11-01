@@ -43,3 +43,9 @@ License: EUPL-1.2
 ## Dashboard
 
 The orchestrator serves a small dashboard at `/ui/` (set `ui: false` in the library options to turn it off). It has no build step and no data of its own: the page asks you to log in with a client that has the `admin` scope, gets a token from `POST /v1/auth/token`, and then polls `GET /v1/workers` and `GET /v1/jobs` once a second. It shows the number of nodes (distinct worker hosts), workers, slots in use, running and queued jobs, the worker kinds (batch, stream) and pools, and the running jobs. The token is kept in `sessionStorage` only, so it ends with the tab.
+
+## Placement rules
+
+Callers need not set `workerPreference` on every job: the config file's `placement` list orders workers by job `type`,
+`kind`, `class` or required capability (first matching rule wins; `others: true` lets unlisted workers serve after the
+listed ones; a job's own `workerPreference` overrides). Example and Pi deployment: `deploy/pi/` in the repository.

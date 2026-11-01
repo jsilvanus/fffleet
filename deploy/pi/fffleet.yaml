@@ -1,0 +1,16 @@
+# Placement for the church stack. Worker IDs are set with FFFLEET_WORKER_ID on each worker.
+# No pools: the workers (assisting PC, operator PC, the Pi) start themselves and register.
+placement:
+  # DSK rendering: assisting PC first, operator PC second. The Pi never renders DSK.
+  - match: { type: dsk }
+    workers: [assisting-pc, operator-pc]
+  # Hardware that only exists on the Pi (Hama USB capture, ...). The Pi worker sets
+  # FFFLEET_CAPABILITIES=device:hama; jobs say requires: ["device:hama"].
+  - match: { requires: ["device:hama"] }
+    workers: [pi]
+  # Stream management (relays, live encodes): assisting PC, then operator PC, then the Pi.
+  - match: { kind: stream }
+    workers: [assisting-pc, operator-pc, pi]
+  # Everything else: same order, and any other worker is allowed after them (least loaded).
+  - workers: [assisting-pc, operator-pc, pi]
+    others: true

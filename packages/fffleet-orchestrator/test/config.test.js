@@ -65,7 +65,7 @@ pools:
 
 test('mistakes are named', () => {
   const bad = (doc, re) => assert.throws(() => normalizeConfig(doc, {}), re);
-  bad({}, /at least one pool/);
+  bad({}, /at least one pool or one placement rule/);
   bad({ pools: [{ name: 'A b', provider: 'process' }] }, /name must be/);
   bad({ pools: [{ name: 'x', provider: 'nope' }] }, /provider must be one of/);
   bad({ pools: [base.pools[0], base.pools[0]] }, /used twice/);
