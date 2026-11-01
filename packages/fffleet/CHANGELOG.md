@@ -1,5 +1,11 @@
 # fffleet
 
+## 2.7.0
+
+### Patch Changes
+
+- 755092e: Add ordered worker preferences to job specs so the orchestrator can choose the highest-ranked eligible worker and immediately fall through to the next available preferred worker.
+
 ## 2.6.0
 
 ### Minor Changes
