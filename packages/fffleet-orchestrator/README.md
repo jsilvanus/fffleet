@@ -48,4 +48,4 @@ The orchestrator serves a small dashboard at `/ui/` (set `ui: false` in the libr
 
 Callers need not set `workerPreference` on every job: the config file's `placement` list orders workers by job `type`,
 `kind`, `class` or required capability (first matching rule wins; `others: true` lets unlisted workers serve after the
-listed ones; a job's own `workerPreference` overrides). Example and Pi deployment: `deploy/pi/` in the repository.
+listed ones; a job's own `workerPreference` overrides). Deployment configs live in the piecosystem repository (`deploy/fleet-pi/`).
