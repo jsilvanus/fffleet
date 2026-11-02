@@ -38,7 +38,7 @@ placement:
   one gets it immediately; the scheduler does not wait for the preferred worker.
 - With `others: false` the list is a strict allowlist: if none of the listed workers has room, the job stays queued.
 - A job's own `workerPreference` overrides the rules. Jobs matching no rule keep least-loaded placement.
-- Pi-only work: give the Pi worker a capability (`FFFLEET_CAPABILITIES=device:hama`) and match on it with a rule listing
+- Pi-only work: give the Pi worker a capability (`FFFLEET_CAPABILITIES=usb`; see docs/worker-roles.md for the planned roles) and match on it with a rule listing
   only `pi`; no other worker can run those jobs anyway because they lack the capability.
 - This is separate from job `priority`, which orders the queue.
 - Worker IDs must stay stable (set `FFFLEET_WORKER_ID` explicitly on every worker).

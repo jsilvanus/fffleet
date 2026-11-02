@@ -1,0 +1,16 @@
+# User unit for the Pi's own worker. Copy to ~/.config/systemd/user/ and edit worker.env first.
+[Unit]
+Description=fffleet worker (pi)
+After=network-online.target fffleet-orchestrator.service
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=%h/apps/fffleet-worker/worker.env
+Environment=PATH=%h/.local/bin:%h/.local/node/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/apps/fffleet-worker
+ExecStart=/usr/bin/env node node_modules/fffleet-worker/bin/fffleet-worker.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

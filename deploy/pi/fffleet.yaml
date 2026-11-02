@@ -1,16 +1,27 @@
-# Placement for the church stack. Worker IDs are set with FFFLEET_WORKER_ID on each worker.
-# No pools: the workers (assisting PC, operator PC, the Pi) start themselves and register.
+# Placement for the church stack. Worker IDs are set with FFFLEET_WORKER_ID on each worker;
+# capabilities with FFFLEET_CAPABILITIES (see docs/worker-roles.md for the full plan).
+#
+#   pi            usb, normal         Pi 4: local USB capture hardware, light stream work next to MediaMTX
+#   operator-pc   normal, dsk, gpu    Operator PC: Docker worker, the strong machine
+#   assisting-pc  normal              Assisting PC: spare capacity
+#
+# No pools: the workers start themselves and register.
 placement:
-  # DSK rendering: assisting PC first, operator PC second. The Pi never renders DSK.
-  - match: { type: dsk }
-    workers: [assisting-pc, operator-pc]
-  # Hardware that only exists on the Pi (Hama USB capture, ...). The Pi worker sets
-  # FFFLEET_CAPABILITIES=device:hama; jobs say requires: ["device:hama"].
-  - match: { requires: ["device:hama"] }
+  # Hardware that only exists on the Pi (Hama USB capture, USB audio, ...). Jobs say requires: ["usb"].
+  # No other worker has the capability, so this rule is a safety net as much as a preference.
+  - match: { requires: ["usb"] }
     workers: [pi]
-  # Stream management (relays, live encodes): assisting PC, then operator PC, then the Pi.
+  # DSK / graphics rendering and anything that needs a GPU: operator PC first, assisting PC second. Never the Pi.
+  - match: { type: dsk }
+    workers: [operator-pc, assisting-pc]
+  - match: { requires: ["gpu"] }
+    workers: [operator-pc]
+  # Relay / MediaMTX work ("normal"): stream jobs say requires: ["normal"]. Strong machines first, the Pi last.
+  - match: { kind: stream, requires: ["normal"] }
+    workers: [operator-pc, assisting-pc, pi]
+  # Other stream jobs: same order.
   - match: { kind: stream }
-    workers: [assisting-pc, operator-pc, pi]
+    workers: [operator-pc, assisting-pc, pi]
   # Everything else: same order, and any other worker is allowed after them (least loaded).
-  - workers: [assisting-pc, operator-pc, pi]
+  - workers: [operator-pc, assisting-pc, pi]
     others: true
