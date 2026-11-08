@@ -5,7 +5,7 @@ import { createProviders } from './providers/index.js';
 import { openSqliteJobStore } from './job-store.js';
 import { serveUi } from './ui.js';
 import { randomUUID } from 'node:crypto';
-import { FleetError, JobRecord, byPriority, canonicalJson, followJobEvents, implicitRequirements, normalizeKinds, normalizeSlots, parseSpec, pruneFinished, satisfies } from 'fffleet';
+import { FleetError, JobRecord, byPriority, canonicalJson, followJobEvents, implicitRequirements, normalizeKinds, normalizeSlots, parseSpec, pruneFinished, resolveVariant, satisfies } from 'fffleet';
 import {
   Registry, allowed, checkBearer, close, createApiHandler, createAuthenticator, createClientStore, createTokenSigner, createTokenVerifier,
   bearerOf, getStream, issueToken, jobMetrics, listen, loadSigningKey, processMetrics, readBody, readJson, send, sendError,
@@ -168,7 +168,12 @@ export function createOrchestrator({
     const pool = poolFor(worker, job.spec.class);
     const total = worker.slots[pool] ?? 0;
     return total > 0 && (worker.used[pool] ?? 0) < total
-      && satisfies(worker.capabilities, implicitRequirements(job.spec)) && satisfies(worker.capabilities, job.spec.requires);
+      && satisfies(worker.capabilities, implicitRequirements(specFor(job, worker).spec)) && satisfies(worker.capabilities, job.spec.requires);
+  }
+
+  /** The spec a worker gets: the job's variant for that worker, or the base spec. */
+  function specFor(job, worker) {
+    return resolveVariant(job.spec, { workerId: worker.id, capabilities: worker.capabilities });
   }
 
   function load(worker) {
@@ -272,14 +277,15 @@ export function createOrchestrator({
     job.pool = pool;
     job.released = false;
     job.assignedAt = Date.now();
-    job.push({ state: 'assigned', workerId: worker.id });
+    const { spec, variant } = specFor(job, worker);
+    job.push({ state: 'assigned', workerId: worker.id, variant });
 
     let res;
     try {
       res = await fetch(`${worker.url}/v1/jobs`, {
         method: 'POST',
         headers: workerHeaders(worker, { 'content-type': 'application/json' }),
-        body: JSON.stringify(job.spec),
+        body: JSON.stringify(spec),
         signal: AbortSignal.timeout(10000),
       });
     } catch (err) {
@@ -310,7 +316,7 @@ export function createOrchestrator({
     release(job, false);
     if (dropWorker) removeWorker(worker, null);
     if (job.final) return;
-    job.push({ state: 'queued', workerId: null });
+    job.push({ state: 'queued', workerId: null, variant: null });
     enqueue(job);
     schedulePump(REDISPATCH_DELAY_MS);
   }

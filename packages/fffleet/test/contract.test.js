@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ContractError, canonicalJson, isFinal, parseSpec, resolvePlaceholders, validateSpec } from '../src/index.js';
+import { ContractError, canonicalJson, isFinal, parseSpec, resolvePlaceholders, validateSpec, resolveVariant } from '../src/index.js';
 
 const minimal = { kind: 'batch', ffmpeg: { args: ['-version'] } };
 
@@ -108,4 +108,72 @@ test('workerPreference is optional, preserves order and rejects invalid lists', 
     assert.equal(result.ok, false, JSON.stringify(value));
     assert.ok(result.errors.some(e => e.path === 'workerPreference'));
   }
+});
+
+const streamWithVariants = {
+  kind: 'stream', stdout: true,
+  inputs: [{ name: 'cam', uri: 'rtsp://cam.local/analysis' }],
+  ffmpeg: { args: ['-i', '{{input:cam}}', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'] },
+  labels: { app: 'x' },
+  variants: [
+    { name: 'remote', when: { workers: ['far'] }, ffmpeg: { args: ['-i', '{{input:cam}}', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'] }, labels: { format: 'mjpeg' } },
+    { when: { capabilities: ['gpu', 'encoder:h264_nvenc'] }, ffmpeg: { args: ['-i', '{{input:cam}}', '-c:v', 'h264_nvenc', '-f', 'mpegts', 'pipe:1'] } },
+  ],
+};
+
+test('variants: validated, named, kept on the spec', () => {
+  const spec = parseSpec(streamWithVariants);
+  assert.equal(spec.variants.length, 2);
+  assert.equal(spec.variants[0].name, 'remote');
+  assert.equal(spec.variants[1].name, 'variant-1');
+  assert.deepEqual(spec.variants[1].when, { capabilities: ['gpu', 'encoder:h264_nvenc'] });
+  assert.equal(spec.variants[1].ffmpeg.durationMs, null);
+  assert.equal('variant' in spec, false);
+});
+
+test('variants: each merged result must be a valid spec; bad shapes are reported with their path', () => {
+  const r = validateSpec({
+    ...streamWithVariants,
+    variants: [
+      { when: {}, ffmpeg: { args: ['-i', '{{input:nope}}', 'pipe:1'] } },
+      { name: 'a', when: { workers: [] }, requires: ['gpu'] },
+      { name: 'a', when: { region: 'x' } },
+      { when: { workers: ['w'] }, labels: 'no' },
+    ],
+  });
+  assert.equal(r.ok, false);
+  const paths = r.errors.map(e => e.path);
+  for (const p of ['variants[0].when', 'variants[0].ffmpeg.args[1]', 'variants[1].when.workers', 'variants[1].requires', 'variants[2].name', 'variants[2].when.region', 'variants[3].labels']) {
+    assert.ok(paths.includes(p), `${p} in ${paths.join(', ')}`);
+  }
+  assert.equal(validateSpec({ ...minimal, variants: [] }).ok, false);
+  assert.equal(validateSpec({ ...minimal, variants: Array.from({ length: 17 }, () => ({ when: { workers: ['a'] } })) }).ok, false);
+});
+
+test('resolveVariant: first matching variant wins; workers match any, capabilities need all', () => {
+  const spec = parseSpec(streamWithVariants);
+  const far = resolveVariant(spec, { workerId: 'far', capabilities: ['gpu', 'encoder:h264_nvenc'] });
+  assert.equal(far.variant, 'remote');
+  assert.equal(far.spec.variant, 'remote');
+  assert.equal('variants' in far.spec, false);
+  assert.ok(far.spec.ffmpeg.args.includes('mjpeg'));
+  assert.deepEqual(far.spec.labels, { app: 'x', format: 'mjpeg' });
+  assert.deepEqual(far.spec.inputs, spec.inputs, 'inputs not set by the variant stay');
+
+  const gpu = resolveVariant(spec, { workerId: 'box', capabilities: new Set(['gpu', 'encoder:h264_nvenc']) });
+  assert.equal(gpu.variant, 'variant-1');
+  const half = resolveVariant(spec, { workerId: 'box', capabilities: ['gpu'] });
+  assert.equal(half.variant, null);
+  assert.ok(half.spec.ffmpeg.args.includes('rawvideo'));
+  assert.equal('variants' in half.spec, false);
+  assert.equal('variant' in half.spec, false);
+
+  // A resolved spec passes validation again unchanged (what a worker receives).
+  assert.deepEqual(parseSpec(far.spec), far.spec);
+});
+
+test('variants of other executor types replace the type section', () => {
+  const spec = parseSpec({ kind: 'batch', type: 'thing', thing: { mode: 'a' }, variants: [{ when: { workers: ['w'] }, thing: { mode: 'b' } }] });
+  assert.deepEqual(resolveVariant(spec, { workerId: 'w' }).spec.thing, { mode: 'b' });
+  assert.deepEqual(resolveVariant(spec, { workerId: 'v' }).spec.thing, { mode: 'a' });
 });

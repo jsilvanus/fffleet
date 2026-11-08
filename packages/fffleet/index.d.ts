@@ -10,6 +10,7 @@ export const FILE_SCHEMES: readonly string[];
 export const HTTP_SCHEMES: readonly string[];
 export const PASSTHROUGH_SCHEMES: readonly string[];
 export const OBJECT_SCHEMES: readonly string[];
+export const MAX_VARIANTS: 16;
 
 export type JobKind = 'stream' | 'batch';
 export type JobState = 'queued' | 'assigned' | 'staging' | 'running' | 'uploading' | 'succeeded' | 'failed' | 'cancelled';
@@ -40,6 +41,12 @@ export interface JobSpecInput {
   priority?: number;
   /** Ordered worker IDs. The first eligible worker wins; unlisted workers are excluded. */
   workerPreference?: string[];
+  /**
+   * Where-dependent versions of this spec (at most 16). After placement the first variant whose `when` fits the
+   * chosen worker replaces the base `ffmpeg`, `inputs`, `outputs` and type section and adds its `labels`.
+   * Placement itself (requires, class, workerPreference) uses the base spec.
+   */
+  variants?: SpecVariant[];
   owner?: string;
   /** Capabilities a worker must have, e.g. 'filter:ass', 'encoder:libx264', 'font:DejaVu Sans'. */
   requires?: string[];
@@ -59,6 +66,19 @@ export interface JobSpecInput {
   [section: string]: unknown;
 }
 
+export interface SpecVariant {
+  /** Reported as `variant` on the job; 'variant-<index>' by default. */
+  name?: string;
+  /** `workers`: any of these worker IDs. `capabilities`: all of these. Both must hold when both are set. */
+  when: { workers?: string[]; capabilities?: string[] };
+  ffmpeg?: { args: string[]; durationMs?: number | null };
+  inputs?: Endpoint[];
+  outputs?: Endpoint[];
+  labels?: Record<string, string>;
+  /** The section of the spec's own type, for types other than ffmpeg. */
+  [section: string]: unknown;
+}
+
 /** A validated spec with every default filled in (what parseSpec returns). */
 export interface JobSpec {
   contract: 1;
@@ -69,6 +89,9 @@ export interface JobSpec {
   priority: number;
   /** Ordered worker IDs; when set, only listed workers may run the job. */
   workerPreference?: string[];
+  variants?: (SpecVariant & { name: string })[];
+  /** Name of the variant applied, on the spec a worker runs. */
+  variant?: string;
   owner: string;
   requires: string[];
   labels: Record<string, string>;
@@ -110,6 +133,8 @@ export interface JobEvent {
   state: JobState;
   progress?: Progress;
   workerId?: string | null;
+  /** On 'assigned' (and 'queued' after a re-dispatch): the spec variant chosen for the worker, null for the base spec. */
+  variant?: string | null;
   exitCode?: number | null;
   error?: JobError;
   outputs?: OutputResult[];
@@ -127,6 +152,8 @@ export interface JobSnapshot {
   labels: Record<string, string>;
   state: JobState;
   workerId: string | null;
+  /** The spec variant the job runs as, null for the base spec. */
+  variant: string | null;
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
@@ -161,6 +188,8 @@ export function validateSpec(input: unknown): { ok: true; spec: JobSpec } | { ok
 export function parseSpec(input: unknown): JobSpec;
 export function resolvePlaceholders(args: string[], values: { input: Record<string, string>; output: Record<string, string> }): string[];
 export function canonicalJson(value: unknown): string;
+/** The spec to run on a worker: the first variant whose `when` fits, merged over the base (no `variants` left), or the base spec. */
+export function resolveVariant(spec: JobSpec, worker?: { workerId?: string | null; capabilities?: Iterable<string> }): { spec: JobSpec; variant: string | null };
 /** Capabilities a job needs beyond `requires`: `type:<type>`, plus `scheme:s3` for s3: URIs. */
 export function implicitRequirements(spec: Pick<JobSpec, 'type' | 'inputs' | 'outputs'>): string[];
 
@@ -198,6 +227,8 @@ export interface JobManagerOptions {
   progressIntervalMs?: number;
   executors?: Record<string, Executor>;
   workerId?: string | null;
+  /** This runner's capabilities, used to pick a spec variant. */
+  capabilities?: () => Iterable<string>;
   fetch?: typeof fetch;
   /** S3 settings or a client; enables s3: URIs. */
   s3?: S3Config | S3Client | null;
@@ -248,6 +279,8 @@ export class JobHandle extends EventEmitter {
   /** The newest stderr lines ffmpeg wrote while the job runs (null until it writes any). */
   stderrTail: string | null;
   snapshot: JobSnapshot | null;
+  /** The spec variant chosen where the job runs (set by the 'assigned' event), null for the base spec. Read it before parsing stdout. */
+  variant: string | null;
   /** Resolves with the final snapshot whatever the outcome; check `state`. */
   readonly done: Promise<JobSnapshot>;
   cancel(): Promise<unknown>;

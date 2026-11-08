@@ -38,7 +38,7 @@ function fakeExecutor() {
       if (rt.signal.aborted) return reject(rt.signal.reason);
       rt.setState('running');
       rt.signal.addEventListener('abort', () => reject(rt.signal.reason), { once: true });
-      controls.set(spec.id, { release: () => resolve({ exitCode: 0, outputs: [] }), rt });
+      controls.set(spec.id, { release: () => resolve({ exitCode: 0, outputs: [] }), rt, spec });
     });
   return { executor, controls };
 }
@@ -532,4 +532,34 @@ test('placement rules: per job type worker order, fallback when busy, Pi-only, p
   await until(() => d3.state === 'running');
   assert.ok(['assist', 'operator'].includes(place('d3')));
   await d3.cancel();
+});
+
+test('variants: the worker gets the variant that fits it, and the job reports which one', async () => {
+  const o = await orchestrator();
+  const near = await worker(o, 'near', { slots: { default: 1 } });
+  const far = await worker(o, 'far', { slots: { default: 1 }, extraCapabilities: ['hw:gpu'] });
+  const fleet = client(o);
+  const spec = (id, extra = {}) => fakeJob(id, {
+    fake: { format: 'raw' },
+    variants: [
+      { name: 'by-id', when: { workers: ['far'] }, fake: { format: 'mjpeg' }, labels: { format: 'mjpeg' } },
+      { name: 'by-cap', when: { capabilities: ['hw:gpu'] }, fake: { format: 'nvenc' } },
+    ],
+    ...extra,
+  });
+  const a = await fleet.submit(spec('va', { workerPreference: ['far'] }));
+  await until(() => a.state === 'running');
+  assert.equal(a.variant, 'by-id');
+  assert.equal(o.backend.get('va').variant, 'by-id');
+  const onWorker = await (await fetch(`${far.w.url}/v1/jobs/va`, { headers: { authorization: `Bearer ${WORKER_TOKEN}` } })).json();
+  assert.equal(onWorker.variant, 'by-id');
+  assert.equal(onWorker.labels.format, 'mjpeg');
+  assert.equal(far.controls.get('va').spec.fake.format, 'mjpeg');
+
+  const b = await fleet.submit(spec('vb', { workerPreference: ['near'] }));
+  await until(() => b.state === 'running');
+  assert.equal(b.variant, null, 'no variant fits near: base spec');
+  assert.equal(near.controls.get('vb').spec.fake.format, 'raw');
+  for (const w of [near, far]) for (const c of w.controls.values()) c.release();
+  await Promise.all([a.done, b.done]);
 });

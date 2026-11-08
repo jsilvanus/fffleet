@@ -118,6 +118,10 @@ export function validateSpec(input) {
   const outputs = normalizeEndpoints(s.outputs, 'outputs', err);
   checkObjectEndpoints(s.kind, inputs, outputs, err);
 
+  // Set by a runner that applied a variant (see resolveVariant); a client does not send it.
+  const variant = s.variant;
+  if (variant !== undefined && (typeof variant !== 'string' || !NAME_RE.test(variant))) err('variant', 'must be 1-64 characters of A-Z a-z 0-9 _ -');
+
   let ffmpeg;
   if (type === 'ffmpeg') {
     const f = s.ffmpeg;
@@ -130,6 +134,8 @@ export function validateSpec(input) {
       checkPlaceholders(f.args, inputs, outputs, err);
     }
   }
+
+  const variants = s.variants === undefined || errors.length ? undefined : normalizeVariants(s, type, err);
 
   if (errors.length) return { ok: false, errors };
 
@@ -154,7 +160,95 @@ export function validateSpec(input) {
   if (redact.length) spec.redact = [...new Set(redact)];
   if (ffmpeg) spec.ffmpeg = ffmpeg;
   else if (s[type] !== undefined) spec[type] = s[type];
+  if (variant !== undefined) spec.variant = variant;
+  if (variants) spec.variants = variants;
   return { ok: true, spec };
+}
+
+export const MAX_VARIANTS = 16;
+const VARIANT_KEYS = new Set(['name', 'when', 'ffmpeg', 'inputs', 'outputs', 'labels']);
+
+/** The spec a variant produces: its sections replace the base ones, its labels are added. */
+function mergeVariant(base, v, type) {
+  const out = { ...base };
+  delete out.variants;
+  delete out.variant;
+  for (const k of ['ffmpeg', 'inputs', 'outputs']) if (v[k] !== undefined) out[k] = v[k];
+  if (type !== 'ffmpeg' && v[type] !== undefined) out[type] = v[type];
+  if (v.labels !== undefined) out.labels = { ...(base.labels ?? {}), ...v.labels };
+  return out;
+}
+
+/** Checks `variants` and that each one, merged over the base, is a valid spec. */
+function normalizeVariants(s, type, err) {
+  const list = s.variants;
+  if (!Array.isArray(list) || list.length === 0 || list.length > MAX_VARIANTS) {
+    err('variants', `must be a non-empty array of at most ${MAX_VARIANTS} variants`);
+    return undefined;
+  }
+  const names = new Set();
+  return list.map((v, i) => {
+    const p = `variants[${i}]`;
+    if (!v || typeof v !== 'object' || Array.isArray(v)) {
+      err(p, 'must be an object');
+      return null;
+    }
+    for (const k of Object.keys(v)) {
+      if (!VARIANT_KEYS.has(k) && !(k === type && type !== 'ffmpeg')) err(`${p}.${k}`, `a variant may only set name, when, ffmpeg, inputs, outputs, labels${type !== 'ffmpeg' ? ` or ${type}` : ''}`);
+    }
+    const name = v.name ?? `variant-${i}`;
+    if (typeof name !== 'string' || !NAME_RE.test(name)) err(`${p}.name`, 'must be 1-64 characters of A-Z a-z 0-9 _ -');
+    else if (names.has(name)) err(`${p}.name`, `duplicate name "${name}"`);
+    names.add(name);
+
+    const w = v.when;
+    const when = {};
+    if (!w || typeof w !== 'object' || Array.isArray(w)) err(`${p}.when`, 'must be an object with workers and/or capabilities');
+    else {
+      for (const k of Object.keys(w)) if (k !== 'workers' && k !== 'capabilities') err(`${p}.when.${k}`, 'unknown condition (known: workers, capabilities)');
+      for (const k of ['workers', 'capabilities']) {
+        if (w[k] === undefined) continue;
+        const arr = w[k];
+        if (!Array.isArray(arr) || !arr.length || arr.some(x => typeof x !== 'string' || !x.trim() || x.length > 128)) {
+          err(`${p}.when.${k}`, 'must be a non-empty array of strings (1-128 characters each)');
+        } else when[k] = [...new Set(arr)];
+      }
+      if (w.workers === undefined && w.capabilities === undefined) err(`${p}.when`, 'needs workers and/or capabilities');
+    }
+
+    if (v.labels !== undefined && (!v.labels || typeof v.labels !== 'object' || Array.isArray(v.labels))) {
+      err(`${p}.labels`, 'must be an object of string values');
+      return null;
+    }
+    const merged = validateSpec(mergeVariant(s, v, type));
+    if (!merged.ok) for (const e of merged.errors) err(`${p}.${e.path}`, e.message);
+
+    const out = { name, when };
+    if (merged.ok) {
+      for (const k of ['ffmpeg', 'inputs', 'outputs']) if (v[k] !== undefined) out[k] = merged.spec[k];
+      if (type !== 'ffmpeg' && v[type] !== undefined) out[type] = v[type];
+      if (v.labels !== undefined) out.labels = { ...v.labels };
+    }
+    return out;
+  });
+}
+
+/**
+ * Picks the first variant whose `when` fits a worker and returns the spec to run there.
+ * `when.workers` matches any listed worker ID, `when.capabilities` needs all listed capabilities; both must hold when both are set.
+ * Without a matching variant the base spec is used. The returned spec has no `variants`; `variant` names the one applied.
+ * @param {import('./types.js').JobSpec} spec   A validated spec.
+ * @param {{ workerId?: string | null, capabilities?: Iterable<string> }} worker
+ * @returns {{ spec: import('./types.js').JobSpec, variant: string | null }}
+ */
+export function resolveVariant(spec, { workerId = null, capabilities = [] } = {}) {
+  if (!spec.variants) return { spec, variant: spec.variant ?? null };
+  const caps = capabilities instanceof Set ? capabilities : new Set(capabilities);
+  const v = spec.variants.find(x => (!x.when.workers || (workerId !== null && x.when.workers.includes(workerId)))
+    && (!x.when.capabilities || x.when.capabilities.every(c => caps.has(c))));
+  const resolved = /** @type {any} */ (mergeVariant(spec, v ?? {}, spec.type));
+  if (v) resolved.variant = v.name;
+  return { spec: resolved, variant: v ? v.name : null };
 }
 
 /** Like validateSpec but throws a ContractError. */
