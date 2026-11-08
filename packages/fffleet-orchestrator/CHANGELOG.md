@@ -1,5 +1,16 @@
 # fffleet-orchestrator
 
+## 2.8.0
+
+### Minor Changes
+
+- ba67aa6: Job spec `variants`: one job can carry where-dependent versions of its `ffmpeg`, `inputs`, `outputs`, type section and `labels`, chosen by worker ID or capabilities after placement. The orchestrator (or a worker that gets the spec directly) applies the first fitting variant and reports it as `variant` on the job, its events and `job.variant` in the client. Additive to contract v1.
+
+### Patch Changes
+
+- Updated dependencies [ba67aa6]
+  - fffleet@2.8.0
+
 ## 2.7.0
 
 ### Minor Changes
