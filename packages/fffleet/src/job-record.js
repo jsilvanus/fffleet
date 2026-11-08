@@ -30,6 +30,8 @@ export class JobRecord {
     this.id = spec.id;
     this.state = 'queued';
     this.workerId = null;
+    /** Name of the spec variant applied where the job runs, or null for the base spec. */
+    this.variant = spec.variant ?? null;
     this.createdAt = new Date().toISOString();
     this.order = ++order;
     this.startedAt = null;
@@ -59,7 +61,7 @@ export class JobRecord {
    */
   static restore(spec, saved) {
     const job = new JobRecord(spec);
-    for (const key of ['state', 'workerId', 'createdAt', 'startedAt', 'finishedAt', 'progress', 'exitCode', 'error', 'outputs', 'stderrTail', 'seq']) {
+    for (const key of ['state', 'workerId', 'variant', 'createdAt', 'startedAt', 'finishedAt', 'progress', 'exitCode', 'error', 'outputs', 'stderrTail', 'seq']) {
       if (saved[key] !== undefined) job[key] = saved[key];
     }
     if (Array.isArray(saved.history) && saved.history.length) job.history = saved.history;
@@ -81,6 +83,7 @@ export class JobRecord {
     const now = new Date().toISOString();
     if (state === 'running' && !this.startedAt) this.startedAt = now;
     if (fields.workerId !== undefined) this.workerId = fields.workerId;
+    if (fields.variant !== undefined) this.variant = fields.variant;
     if (fields.progress) this.progress = fields.progress;
     if (fields.stderrTail !== undefined && !isFinal(state)) this.stderrTail = fields.stderrTail;
     this.state = state;
@@ -92,7 +95,7 @@ export class JobRecord {
       this.stderrTail = fields.stderrTail ?? null;
     }
     const event = { jobId: this.id, seq: ++this.seq, at: now, state };
-    for (const key of ['progress', 'workerId', 'exitCode', 'error', 'outputs', 'stderrTail']) {
+    for (const key of ['progress', 'workerId', 'variant', 'exitCode', 'error', 'outputs', 'stderrTail']) {
       if (fields[key] !== undefined) event[key] = fields[key];
     }
     if (isFinal(state)) {
@@ -133,6 +136,7 @@ export class JobRecord {
       labels: this.spec.labels,
       state: this.state,
       workerId: this.workerId,
+      variant: this.variant,
       createdAt: this.createdAt,
       startedAt: this.startedAt,
       finishedAt: this.finishedAt,

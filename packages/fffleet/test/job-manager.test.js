@@ -232,3 +232,16 @@ test('stdout is only for stream jobs', () => {
   const { m } = manager();
   assert.throws(() => m.submit({ ...fakeSpec('b'), kind: 'batch', stdout: true }), { code: 'INVALID_SPEC' });
 });
+
+test('a spec with variants submitted straight to a runner runs as the variant that fits it', () => {
+  const variants = [{ name: 'gpu', when: { capabilities: ['hw:gpu'] }, fake: { v: 2 } }];
+  const { m } = manager({ workerId: 'w1', capabilities: () => ['hw:gpu'] });
+  const { job } = m.submit(fakeSpec('v1', { fake: { v: 1 }, variants }));
+  assert.equal(job.variant, 'gpu');
+  assert.equal(m.jobs.get('v1').spec.fake.v, 2);
+  assert.equal(m.submit(fakeSpec('v1', { fake: { v: 1 }, variants })).created, false, 'resubmitting is idempotent');
+  const plain = manager({ workerId: 'w2' }).m;
+  assert.equal(plain.submit(fakeSpec('v2', { fake: { v: 1 }, variants })).job.variant, null);
+  m.close?.();
+  plain.close?.();
+});

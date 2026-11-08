@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { mkdir, rm } from 'node:fs/promises';
 import { availableParallelism, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { KINDS, canonicalJson, implicitRequirements, parseSpec } from './contract.js';
+import { KINDS, canonicalJson, implicitRequirements, parseSpec, resolveVariant } from './contract.js';
 import { createInputCache, parseSize } from './input-cache.js';
 import { createS3Client } from './s3.js';
 import { runFfmpegJob } from './executor.js';
@@ -34,6 +34,7 @@ export class JobManager extends EventEmitter {
    * @param {number} [opts.progressIntervalMs]
    * @param {Record<string, Function>} [opts.executors]   type -> (spec, runtime) => Promise<result>
    * @param {string} [opts.workerId]
+   * @param {() => Iterable<string>} [opts.capabilities]   This runner's capabilities, for picking a spec variant.
    * @param {typeof fetch} [opts.fetch]
    * @param {object | null} [opts.s3]   S3 settings (see s3ConfigFromEnv) or a client; enables s3: URIs.
    * @param {{ dir: string, maxBytes?: number | string } | null} [opts.cache]   Keeps staged s3: and http(s): inputs between jobs (least recently used removed above maxBytes, default 20 GB).
@@ -48,6 +49,7 @@ export class JobManager extends EventEmitter {
     progressIntervalMs = 1000,
     executors = {},
     workerId = null,
+    capabilities = () => [],
     fetch: fetchImpl,
     s3 = null,
     cache = null,
@@ -63,6 +65,7 @@ export class JobManager extends EventEmitter {
     this.progressIntervalMs = progressIntervalMs;
     this.executors = { ffmpeg: runFfmpegJob, ffprobe: runFfprobeJob, ...executors };
     this.workerId = workerId;
+    this.capabilities = capabilities;
     this.fetch = fetchImpl;
     this.cache = cache ? createInputCache({ dir: cache.dir, maxBytes: cache.maxBytes === undefined ? undefined : parseSize(cache.maxBytes) }) : null;
     this.s3 = !s3 ? null : typeof s3.getFile === 'function' ? s3 : createS3Client({ fetch: fetchImpl, ...s3 });
@@ -84,7 +87,9 @@ export class JobManager extends EventEmitter {
    */
   submit(input) {
     if (this.closed) throw new FleetError('SHUTTING_DOWN', 'job manager is closed', { status: 503 });
-    const spec = parseSpec(input);
+    const parsed = parseSpec(input);
+    // A spec with variants runs as the variant that fits this runner (an orchestrator sends it already resolved).
+    const { spec } = resolveVariant(parsed, { workerId: this.workerId, capabilities: this.capabilities() });
     spec.id ??= `job_${randomUUID()}`;
 
     const existing = this.jobs.get(spec.id);

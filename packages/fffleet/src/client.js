@@ -24,6 +24,8 @@ export class JobHandle extends EventEmitter {
     this.snapshot = null;
     /** The newest stderr lines ffmpeg wrote while the job runs (null until it writes any). */
     this.stderrTail = null;
+    /** Name of the spec variant chosen where the job runs (known from the 'assigned' event), or null for the base spec. */
+    this.variant = null;
     let resolve, reject;
     /** @type {Promise<import('./types.js').JobSnapshot>} */
     this.done = new Promise((res, rej) => {
@@ -36,6 +38,7 @@ export class JobHandle extends EventEmitter {
   }
 
   _event(event) {
+    if (event.variant !== undefined) this.variant = event.variant;
     this.emit('event', event);
     if (event.progress) this.emit('progress', event.progress, event);
     if (event.stderrTail) {
@@ -128,6 +131,7 @@ export function createFleet({ url, token, clientId, clientSecret, scope, fallbac
     const m = localManager();
     const { job } = m.submit(spec);
     const handle = new JobHandle(job.id, 'local');
+    handle.variant = job.variant ?? null;
     handle._cancel = async () => m.cancel(job.id);
     handle._write = data => m.writeStdin(job.id, data);
     handle._endStdin = () => m.closeStdin(job.id);
@@ -146,6 +150,7 @@ export function createFleet({ url, token, clientId, clientSecret, scope, fallbac
     const job = await request('POST', '/v1/jobs', spec);
     const handle = new JobHandle(job.id, 'remote');
     handle.snapshot = job;
+    handle.variant = job.variant ?? null;
     const ac = new AbortController();
     controllers.add(ac);
     const enc = encodeURIComponent(job.id);

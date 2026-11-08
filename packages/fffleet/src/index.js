@@ -2,6 +2,7 @@ export { createFleet, JobHandle } from './client.js';
 export {
   CONTRACT_VERSION, KINDS, STATES, isFinal, validateSpec, parseSpec, ContractError,
   resolvePlaceholders, canonicalJson, implicitRequirements, FILE_SCHEMES, HTTP_SCHEMES, PASSTHROUGH_SCHEMES, OBJECT_SCHEMES,
+  resolveVariant, MAX_VARIANTS,
 } from './contract.js';
 export { JobManager, normalizeSlots, normalizeKinds, autoSlots } from './job-manager.js';
 export { JobRecord, FleetError, byPriority, pruneFinished } from './job-record.js';

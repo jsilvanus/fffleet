@@ -58,7 +58,7 @@ export function createWorker({
   cache = null,
   log = () => {},
 } = {}) {
-  const manager = new JobManager({ slots, kinds, ffmpegPath, workRoot, workerId: id, progressIntervalMs, executors, s3, cache });
+  const manager = new JobManager({ slots, kinds, ffmpegPath, workRoot, workerId: id, capabilities: () => capabilities, progressIntervalMs, executors, s3, cache });
   const probes = parseProbes(probe);
   let baseCapabilities = [];
   let probed = [];
